@@ -1,0 +1,9 @@
+[submodule "utilities"]
+	path = utilities
+	url = https://github.com/zhengjy926/utilities.git
+[submodule "drivers/bsp"]
+	path = drivers/bsp
+	url = https://github.com/zhengjy926/bsp.git
+[submodule "devices"]
+	path = devices
+	url = https://github.com/zhengjy926/devices.git

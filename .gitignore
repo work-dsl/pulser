@@ -1,0 +1,38 @@
+# Keil MDK 忽略文件
+
+## 用户特定文件
+# 存储了调试器设置、断点、窗口布局等个人配置
+*.uvoptx
+*.uvguix*
+
+## 编译输出目录
+# 默认的输出文件夹，包含了所有编译生成的文件
+Objects/
+Listings/
+
+## 编译过程中生成的具体文件
+# 这些文件都可以通过源文件重新生成
+*.o
+*.obj
+*.d
+*.dep
+*.crf
+*.lnp
+*.axf
+*.elf
+*.hex
+*.bin
+*.map
+*.sct
+*.htm
+*.plg
+*.bak
+*.iex
+
+## 调试器相关文件
+# 调试器配置文件和日志，属于个人环境
+JLinkLog.txt
+JLinkSettings.ini
+*.base@*
+*.icf
+*.html
