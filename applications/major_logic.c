@@ -103,7 +103,7 @@ static void on_ocp_info_callback(const ocp_info_t *info)
 
 /**
  * @brief 过流保护事件处理器
- * @details 当检测到过流时被调用（由safety模块调用）
+ * @details 当检测到过流时被调用
  */
 static void on_ocp_event_handler(void)
 {
@@ -112,7 +112,7 @@ static void on_ocp_event_handler(void)
     /* 停止脉冲输出 */
     pulse_engine_stop();
     
-    /* 注意：实际的峰值查找和上报由current_monitor模块在任务中处理 */
+    /* 主动上传过流状态信息 */
 }
 
 /* Exported functions --------------------------------------------------------*/

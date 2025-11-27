@@ -36,6 +36,7 @@
 
 #include "stm32g4xx_ll_hrtim.h"
 #include "stm32g4xx_ll_bus.h"
+#include "stm32g4xx_ll_iwdg.h"
 #include "stm32g4xx_ll_cortex.h"
 #include "stm32g4xx_ll_rcc.h"
 #include "stm32g4xx_ll_system.h"

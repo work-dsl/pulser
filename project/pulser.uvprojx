@@ -314,7 +314,7 @@
           </ArmAdsMisc>
           <Cads>
             <interw>1</interw>
-            <Optim>1</Optim>
+            <Optim>4</Optim>
             <oTime>0</oTime>
             <SplitLS>0</SplitLS>
             <OneElfS>1</OneElfS>
@@ -510,6 +510,11 @@
               <FileType>1</FileType>
               <FilePath>..\modules\current_monitor.c</FilePath>
             </File>
+            <File>
+              <FileName>ecg_sync.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\modules\ecg_sync.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -556,7 +561,7 @@
                   <RVCTZI>0</RVCTZI>
                   <RVCTOtherData>0</RVCTOtherData>
                   <ModuleSelection>0</ModuleSelection>
-                  <IncludeInBuild>0</IncludeInBuild>
+                  <IncludeInBuild>1</IncludeInBuild>
                   <AlwaysBuild>2</AlwaysBuild>
                   <GenerateAssemblyFile>2</GenerateAssemblyFile>
                   <AssembleAssemblyFile>2</AssembleAssemblyFile>
@@ -615,6 +620,11 @@
               <FileName>adc.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\devices\adc.c</FilePath>
+            </File>
+            <File>
+              <FileName>hwtimer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\devices\hwtimer.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -703,7 +713,7 @@
                   <RVCTZI>0</RVCTZI>
                   <RVCTOtherData>0</RVCTOtherData>
                   <ModuleSelection>0</ModuleSelection>
-                  <IncludeInBuild>0</IncludeInBuild>
+                  <IncludeInBuild>1</IncludeInBuild>
                   <AlwaysBuild>2</AlwaysBuild>
                   <GenerateAssemblyFile>2</GenerateAssemblyFile>
                   <AssembleAssemblyFile>2</AssembleAssemblyFile>
@@ -860,9 +870,24 @@
               <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_adc_ex.c</FilePath>
             </File>
             <File>
+              <FileName>stm32g4xx_hal_comp.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_comp.c</FilePath>
+            </File>
+            <File>
               <FileName>stm32g4xx_hal_cortex.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_cortex.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32g4xx_hal_dac.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_dac.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32g4xx_hal_dac_ex.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_dac_ex.c</FilePath>
             </File>
             <File>
               <FileName>stm32g4xx_hal_dma.c</FileName>
@@ -903,11 +928,6 @@
               <FileName>stm32g4xx_hal_gpio.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_gpio.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_iwdg.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_iwdg.c</FilePath>
             </File>
             <File>
               <FileName>stm32g4xx_hal_pwr.c</FileName>
@@ -978,21 +998,6 @@
               <FileName>stm32g4xx_ll_hrtim.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_ll_hrtim.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_comp.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_comp.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_dac.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_dac.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_dac_ex.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_dac_ex.c</FilePath>
             </File>
           </Files>
         </Group>

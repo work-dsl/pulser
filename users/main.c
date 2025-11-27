@@ -52,7 +52,6 @@
  */
 int main(void)
 {   
-    static int loop_count = 0;
     int ret;
     
     /* 底层驱动初始化 */
@@ -89,6 +88,7 @@ int main(void)
         stimer_service();       /* 软件定时器服务 */
         slave_proto_task();     /* 协议处理任务 */
         major_logic_task();     /* 主逻辑协调任务 */
+        safety_task();
     }
 }
 

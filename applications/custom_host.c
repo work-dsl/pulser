@@ -53,6 +53,7 @@ typedef struct {
 #define HOST_MAX_RETRY             (3U)       /**< 命令最大重试次数 */
 #define HOST_HANDSHAKE_TIMEOUT_MS  (1000U)    /**< 握手响应超时时间（毫秒） */
 #define HOST_MAX_SLAVES            (8U)       /**< 最大从机数量 */
+#define MIN(a, b)                  ((a) < (b) ? (a) : (b))  /**< 最小值宏 */
 
 /* Private macro -------------------------------------------------------------*/
 
@@ -72,6 +73,18 @@ static proto_t g_host_proto;
  * @brief 接收缓冲区
  */
 static uint8_t g_host_rx_buf[256U];
+
+/**
+ * @brief 帧数据队列缓冲区
+ * @details 队列中每个帧的格式：长度(2字节小端) + 帧数据
+ *          最大帧长度64字节，队列可存储最多8帧
+ */
+static uint8_t g_host_frame_queue_buf[8U * (2U + 64U)];  /* 8帧 * (2字节长度 + 64字节数据) */
+
+/**
+ * @brief 帧数据队列
+ */
+static kfifo_t g_host_frame_queue;
 
 /**
  * @brief 响应接收缓冲区
@@ -114,9 +127,8 @@ static uint8_t g_slave_count = 0U;
 static void (*g_on_handshake_request_cb)(uint8_t dev) = NULL;
 
 /* Private function prototypes -----------------------------------------------*/
-static void host_on_frame(proto_t *p, const uint8_t *frame, uint16_t len);
-static void host_on_error(proto_t *p, int err);
 static uint32_t host_get_tick(void);
+static void host_process_frame(const uint8_t *frame, uint16_t len);
 static int host_wait_response(uint32_t timeout_ms);
 static void host_handle_handshake_request(uint8_t dev);
 static int host_find_slave(uint8_t dev);
@@ -203,15 +215,13 @@ static void host_handle_handshake_request(uint8_t dev)
 }
 
 /**
- * @brief 帧接收完成回调函数
- * @param p 协议解析器实例指针（未使用）
+ * @brief 处理接收到的帧
  * @param frame 接收到的完整帧数据
  * @param len 帧长度
  * @details 接收从机响应，保存到响应缓冲区
  */
-static void host_on_frame(proto_t *p, const uint8_t *frame, uint16_t len)
+static void host_process_frame(const uint8_t *frame, uint16_t len)
 {
-    (void)p;
     
     /* 检查帧有效性 */
     if (len >= 9U) {
@@ -252,30 +262,6 @@ static void host_on_frame(proto_t *p, const uint8_t *frame, uint16_t len)
     }
 }
 
-/**
- * @brief 错误回调函数
- * @param p 协议解析器实例指针（未使用）
- * @param err 错误码
- */
-static void host_on_error(proto_t *p, int err)
-{
-    (void)p;
-    
-    switch (err) {
-    case PROTO_ERR_TIMEOUT:
-        LOG_I("Frame reception timeout");
-        break;
-    case PROTO_ERR_CHECKSUM:
-        LOG_I("CRC checksum failed");
-        break;
-    case PROTO_ERR_LEN_FIELD:
-        LOG_I("Frame length errno");
-        break;
-    default:
-        LOG_I("Parser error: %d", err);
-        break;
-    }
-}
 
 /**
  * @brief 等待响应（带超时）
@@ -292,12 +278,10 @@ static int host_wait_response(uint32_t timeout_ms)
     start_tick = host_get_tick();
     g_host_resp_status = HOST_RESP_NONE;
     
-    /* 轮询等待响应 */
+        /* 轮询等待响应 */
     while (g_host_resp_status == HOST_RESP_NONE) {
-        /* 轮询解析器 */
-        if (port != NULL) {
-            (void)proto_poll_from_kfifo(&g_host_proto, &port->rx_fifo);
-        }
+        /* 轮询解析器（会自动处理队列中的帧） */
+        host_proto_poll();
         
         /* 检查超时 */
         current_tick = host_get_tick();
@@ -341,15 +325,30 @@ int host_proto_init(void)
         return ret;
     }
     
-    (void)proto_init(&g_host_proto,
-               &CUSTOM_FMT,
-               g_host_rx_buf,
-               (uint16_t)sizeof(g_host_rx_buf),
-               host_on_frame,
-               host_on_error);
+    /* 初始化帧数据队列 */
+    ret = kfifo_init(&g_host_frame_queue,
+                     g_host_frame_queue_buf,
+                     (unsigned int)sizeof(g_host_frame_queue_buf),
+                     1U);  /* 元素大小为1字节 */
+    if (ret != 0) {
+        LOG_D("Failed to initialize frame queue: %d\r\n", ret);
+        return ret;
+    }
+    
+    /* 初始化协议解析器（使用队列模式） */
+    ret = proto_init(&g_host_proto,
+                     &CUSTOM_FMT,
+                     g_host_rx_buf,
+                     (uint16_t)sizeof(g_host_rx_buf),
+                     &g_host_frame_queue,
+                     NULL);  /* 主机不需要错误回调 */
+    if (ret != 0) {
+        LOG_D("Failed to initialize proto: %d\r\n", ret);
+        return ret;
+    }
     
     /* 设置时间戳回调函数，启用超时检测 */
-    (void)proto_set_get_tick(&g_host_proto, host_get_tick);
+    proto_set_tick_cb(&g_host_proto, host_get_tick);
     
     /* 初始化响应状态 */
     g_host_resp_status = HOST_RESP_NONE;
@@ -362,12 +361,26 @@ int host_proto_init(void)
 /**
  * @brief 轮询主机协议解析器
  * @details 从串口FIFO中读取数据并送入协议解析器处理。
+ *          从帧队列中读取完整帧并处理。
  *          建议在主循环或任务中定期调用此函数。
  */
 void host_proto_poll(void)
 {
+    uint8_t frame_buf[256U];
+    unsigned int frame_len;
+    
     if (port != NULL) {
-        (void)proto_poll_from_kfifo(&g_host_proto, &port->rx_fifo);
+        (void)proto_poll(&g_host_proto, &port->rx_fifo);
+    }
+    
+    /* 从输出队列中读取并处理帧 */
+    while (kfifo_len(&g_host_frame_queue) > 0U) {
+        frame_len = kfifo_out(&g_host_frame_queue, frame_buf, 
+                             MIN((unsigned int)sizeof(frame_buf), 
+                                 kfifo_len(&g_host_frame_queue)));
+        if (frame_len > 0U) {
+            host_process_frame(frame_buf, (uint16_t)frame_len);
+        }
     }
 }
 

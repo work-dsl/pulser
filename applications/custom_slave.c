@@ -34,60 +34,36 @@
 
 /* Private define ------------------------------------------------------------*/
 
-#define HANDSHAKE_INTERVAL_MS  (1000U)              /**< 握手间隔：1秒（1Hz） */
-
 /* Private macro -------------------------------------------------------------*/
 
 /* Private variables ---------------------------------------------------------*/
 
-/**
- * @brief 串口设备指针
- */
-static serial_t *port;
-
-/**
- * @brief 协议解析器实例
- */
-static proto_t g_slave_proto;
-
-/**
- * @brief 接收缓冲区
- */
-static uint8_t g_slave_rx_buf[256U];
-
-/**
- * @brief 从机当前状态
- */
-static volatile slave_state_t g_slave_state = SLAVE_STATE_WAIT_HANDSHAKE;
-
-/**
- * @brief 上次发送握手请求的时间戳
- */
-static uint32_t g_last_handshake_broadcast_tick = 0U;
+static serial_t *port;                                 /**< 串口设备指针 */
+static proto_t g_slave_proto;                          /**< 协议解析器实例 */
+static uint8_t g_slave_rx_buf[PROTO_CUSTOM_FRAME_MAX_LEN];  /**< 解析器内部组包用的临时buffer */
+static uint8_t g_slave_valid_fifo_buf[8U * PROTO_CUSTOM_FRAME_MAX_LEN];   /**< 有效数据队列缓冲区 */
+static kfifo_t g_slave_valid_fifo;                     /**< 有效数据输出队列 */
+static volatile slave_state_t g_slave_state = SLAVE_STATE_WAIT_HANDSHAKE; /**< 从机当前状态 */
+static uint32_t g_last_handshake_tick = 0U;  /**< 上次发送握手请求的时间戳 */
 
 /* Private function prototypes -----------------------------------------------*/
-static void slave_on_frame(proto_t *p, const uint8_t *frame, uint16_t len);
-static void slave_on_error(proto_t *p, int err);
-static uint32_t slave_get_tick(void);
 static void slave_broadcast_handshake_request(void);
 static void slave_process_handshake(void);
 static inline int slave_build_frame(uint8_t *out, uint16_t out_size,
                                     uint8_t cmd, const uint8_t *data, 
                                     uint16_t data_len);
-static void slave_handle_handshake(const uint8_t *payload, uint16_t len);
-static void slave_handle_sys_reset(const uint8_t *payload, uint16_t len);
-static void slave_handle_self_check(const uint8_t *payload, uint16_t len);
-static void slave_handle_low_power_mode(const uint8_t *payload, uint16_t len);
-static void slave_handle_iap(const uint8_t *payload, uint16_t len);
-static void slave_handle_upload_mode(const uint8_t *payload, uint16_t len);
-static void slave_handle_status_upload(const uint8_t *payload, uint16_t len);
-static void slave_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len);
-static void slave_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len);
+static void slave_proto_error_callback(void *inst, proto_err_t err);
 static void slave_cmd_response_callback(uint8_t cmd, const cmd_result_t *result);
+static inline int slave_build_response_frame(uint8_t *out, uint16_t out_size,
+                                             uint8_t cmd, uint8_t ack,
+                                             const uint8_t *data, 
+                                             uint16_t data_len);
+static void slave_send_response_frame(uint8_t cmd, const cmd_result_t *result);
 
 /* Exported variables  -------------------------------------------------------*/
 
 /* Exported functions --------------------------------------------------------*/
+extern uint32_t HAL_GetTick(void);
 
 /**
  * @brief 初始化从机协议解析器
@@ -95,109 +71,189 @@ static void slave_cmd_response_callback(uint8_t cmd, const cmd_result_t *result)
  * @retval <0 失败（错误码）
  * @details 初始化串口设备、协议解析器和相关回调函数
  */
- int slave_proto_init(void)
- {
-     int ret;
-     
-     port = serial_find("uart1");
-     if (port == NULL) {
-         LOG_D("Failed to find uart1\r\n");
-         return -ENODEV;
-     }
-     
-     /* 初始化串口设备 */
-     ret = serial_open(port);
-     if (ret != 0) {
-         LOG_D("Failed to initialize uart1: %d\r\n", ret);
-         return ret;
-     }
-     
-     /* 初始化命令处理服务 */
-     cmd_handler_init();
-     cmd_handler_set_response_callback(slave_cmd_response_callback);
-     
-     (void)proto_init(&g_slave_proto,
-                &CUSTOM_FMT,
-                g_slave_rx_buf,
-                (uint16_t)sizeof(g_slave_rx_buf),
-                slave_on_frame,
-                slave_on_error);
-     
-     /* 设置时间戳回调函数，启用超时检测 */
-     (void)proto_set_get_tick(&g_slave_proto, slave_get_tick);
-                
-     return 0;
- }
+int slave_proto_init(void)
+{
+    int ret;
+
+    port = serial_find("uart1");
+    if (port == NULL) {
+        LOG_D("Failed to find uart1\r\n");
+        return -ENODEV;
+    }
+
+    /* 初始化串口设备 */
+    ret = serial_open(port);
+    if (ret != 0) {
+        LOG_D("Failed to initialize uart1: %d\r\n", ret);
+        return ret;
+    }
+
+    /* 初始化命令处理服务 */
+    cmd_handler_set_response_callback(slave_cmd_response_callback);
+
+    /* 初始化有效数据输出队列 */
+    ret = kfifo_init(&g_slave_valid_fifo,
+                      g_slave_valid_fifo_buf,
+                     (unsigned int)sizeof(g_slave_valid_fifo_buf),
+                      1U);  /* 元素大小为1字节 */
+    if (ret != 0) {
+        LOG_D("Failed to initialize frame queue: %d\r\n", ret);
+        return ret;
+    }
+
+    /* 初始化协议解析器（使用队列模式） */
+    ret = proto_init(&g_slave_proto,
+                     &CUSTOM_FMT,
+                     g_slave_rx_buf,
+                     (uint16_t)sizeof(g_slave_rx_buf),
+                     &g_slave_valid_fifo,
+                     slave_proto_error_callback);
+    if (ret != 0) {
+        LOG_D("Failed to initialize proto: %d\r\n", ret);
+        return ret;
+    }
+
+    /* 设置时间戳回调函数，启用超时检测 */
+    proto_set_tick_cb(&g_slave_proto, HAL_GetTick);
+    return 0;
+}
  
 /**
  * @brief 轮询从机协议解析器
  * @details 从串口FIFO中读取数据并送入协议解析器处理。
+ *          从帧队列中读取完整帧并处理。
  *          建议在主循环或任务中定期调用此函数。
  */
- void slave_proto_task(void)
- {
-     if (port != NULL) {
-         (void)proto_poll_from_kfifo(&g_slave_proto, &port->rx_fifo);
-     }
-     
-     /* 处理握手流程 */
-     slave_process_handshake();
- }
+void slave_proto_task(void)
+{
+    uint8_t frame_buf[PROTO_CUSTOM_FRAME_MAX_LEN];
+    unsigned int frame_len;
+
+    if (port != NULL) {
+        (void)proto_poll(&g_slave_proto, &port->rx_fifo);
+    }
+
+    /* 从输出队列中读取并处理帧 */
+    while (kfifo_len(&g_slave_valid_fifo) > 0U) {
+        frame_len = kfifo_out(&g_slave_valid_fifo, frame_buf, sizeof(frame_buf));
+        if (frame_len > 0U) {
+            slave_process_frame(frame_buf, (uint16_t)frame_len);
+        }
+    }
+
+    /* 处理握手流程 */
+    slave_process_handshake();
+}
 
 /* Private functions ---------------------------------------------------------*/
+
 /**
- * @brief 获取系统时间戳（毫秒）
- * @return 系统时间戳（毫秒）
- * @details 可根据实际系统使用HAL_GetTick()或其他时间函数
+ * @brief 协议解析器错误回调函数
+ * @param inst 协议解析器实例指针（void *类型，需转换为proto_t *）
+ * @param err 错误码（proto_err_t）
+ * @details 当协议解析器检测到帧解析错误时调用此函数，发送错误应答帧
  */
-static uint32_t slave_get_tick(void)
+static void slave_proto_error_callback(void *inst, proto_err_t err)
 {
-    extern uint32_t HAL_GetTick(void);
-    return HAL_GetTick();
+    uint8_t frame[32U];
+    int flen;
+    uint8_t ack_code;
+    
+    (void)inst;
+    
+    if (port == NULL) {
+        return;
+    }
+    
+    /* 将协议解析器错误码转换为应答码 */
+    switch (err) {
+    case PROTO_ERR_LEN_INVALID:
+        ack_code = ACK_ERR_LEN_FIELD;
+        break;
+    case PROTO_ERR_CHECKSUM:
+        ack_code = ACK_ERR_CHECKSUM;
+        break;
+    case PROTO_ERR_TAIL:
+        ack_code = ACK_ERR_TAIL;
+        break;
+    case PROTO_ERR_OUT_FIFO_FULL:
+        ack_code = ACK_ERR_BUF_TOO_SMALL;
+        break;
+    case PROTO_ERR_TIMEOUT:
+        ack_code = ACK_ERR_TIMEOUT;
+        break;
+    default:
+        ack_code = ACK_ERR_UNKNOWN;
+        break;
+    }
+    
+    /* 构建并发送错误应答帧，命令码固定为0x2F */
+    flen = slave_build_response_frame(frame, (uint16_t)sizeof(frame),
+                                     CMD_FRAME_PARSER_ERR_ACK,  /* 帧解析错误应答命令码 */
+                                     ack_code,                  /* 错误应答码 */
+                                     NULL,                      /* 无数据载荷 */
+                                     0U);
+    
+    if (flen > 0) {
+        (void)serial_write(port, frame, (uint16_t)flen);
+        LOG_D("Send frame parser error ACK: err=%d, ack=0x%02X", err, ack_code);
+    }
 }
  
 /**
- * @brief 帧接收完成回调函数
- * @param p 协议解析器实例指针（未使用）
- * @param frame 接收到的完整帧数据
- * @param len 帧长度
- * @details 解析帧内容，过滤设备地址，并根据命令码分发处理
+ * @brief 处理接收到的帧
+ * @param frame 接收到的payload数据（已去除帧头、校验码、帧尾）
+ * @param len payload长度
+ * @details 解析帧内容，过滤产品地址和模块地址，并根据命令码分发处理
+ * @note proto.c已经去除了帧头(0xFA)、校验码(CRC16)和帧尾(0x0D)，
+ *       所以frame参数只包含：LEN(2) + DEV(1) + CMD(1) + MOD(1) + DATA(...)
+ *       其中DEV为产品地址，MOD为模块地址，两者都必须匹配才会处理该帧
  */
-static void slave_on_frame(proto_t *p, const uint8_t *frame, uint16_t len)
+void slave_process_frame(const uint8_t *frame, uint16_t len)
 {
-    (void)p;
-    /* frame结构：
-    * [0]     = 0xFA（帧头）
-    * [1..2]  = LEN（长度字段，小端）
-    * [3]     = DEV（设备地址）
-    * [4]     = CMD（命令码）
-    * [5]     = MOD（模块标识）
-    * [6..]   = DATA（数据载荷）
-    * [len-3] [len-2] = CRC16（校验，小端）
-    * [len-1] = 0x0D（帧尾）
+    /* frame结构（payload，已去除帧头、校验码、帧尾）：
+    * [0..1]  = LEN（长度字段，小端）
+    * [2]     = PRODUCT（产品地址，PRODUCT_ADDR）
+    * [3]     = CMD（命令码）
+    * [4]     = MOD（模块地址，MODULE_ADDR）
+    * [5..]   = DATA（数据载荷，如果有）
     */
-    if (len < PROTO_CUSTOM_FRAME_MIN_LEN) {
+    /* 最小payload长度：LEN(2) + DEV(1) + CMD(1) + MOD(1) = 5字节 */
+    if (len < 5U) {
         LOG_I("Frame too short: %d", (int)len);
         return;
     }
 
-    uint8_t dev = frame[3];
-    uint8_t cmd = frame[4];
-    uint8_t mod = frame[5];
-    
-    LOG_D("Frame received: len=%d, dev=0x%02X, cmd=0x%02X, mod=0x%02X, state=%d", 
-          (int)len, dev, cmd, mod, (int)g_slave_state);
+    uint8_t product = frame[2];      /* 产品地址 */
+    uint8_t cmd = frame[3];
+    uint8_t mod = frame[4];      /* 模块地址 */
 
-    /* 地址过滤：不是给我的就直接丢弃 */
-    if (dev != SLAVE_DEVICE_ADDR) {
-        LOG_D("Address mismatch: expected=0x%02X, got=0x%02X", 
-              SLAVE_DEVICE_ADDR, dev);
+    /* 地址检查：检查产品地址和模块地址，不匹配则需要应答错误 */
+    if (product != PRODUCT_ADDR) {
+        LOG_D("Product address mismatch: expected=0x%02X, got=0x%02X", 
+              PRODUCT_ADDR, product);
+        /* 发送产品地址错误应答 */
+        cmd_result_t result;
+        result.ack_code = ACK_ERR_PRODUCT_ADDR;
+        result.resp_len = 0;
+        slave_send_response_frame(cmd, &result);
+        return;
+    }
+    
+    if (mod != MODULE_ADDR) {
+        LOG_D("Module address mismatch: expected=0x%02X, got=0x%02X", 
+              MODULE_ADDR, mod);
+        /* 发送模块地址错误应答 */
+        cmd_result_t result;
+        result.ack_code = ACK_ERR_MODULE_ADDR;
+        result.resp_len = 0;
+        slave_send_response_frame(cmd, &result);
         return;
     }
 
-    /* 计算payload长度 = 总长 - 固定9字节 */
-    uint16_t payload_len = (uint16_t)(len - 9U);
-    const uint8_t *payload = &frame[6];
+    /* 计算数据载荷长度 = payload总长 - 固定5字节（LEN+DEV+CMD+MOD） */
+    uint16_t payload_len = (uint16_t)(len - 5U);
+    const uint8_t *payload = &frame[5];
 
     /* 如果未握手，只处理握手命令，其他命令忽略 */
     if ((g_slave_state == SLAVE_STATE_WAIT_HANDSHAKE) && (cmd != CMD_HAND_SHAKE)) {
@@ -206,73 +262,123 @@ static void slave_on_frame(proto_t *p, const uint8_t *frame, uint16_t len)
     }
 
     /* 根据命令类型处理 */
+    cmd_result_t result;
+    
+    /* 初始化结果 */
+    result.ack_code = ACK_OK;
+    result.resp_len = 0;
+    
     switch (cmd) {
     case CMD_HAND_SHAKE:
-        slave_handle_handshake(payload, payload_len);
+        if (g_slave_state == SLAVE_STATE_WAIT_HANDSHAKE) {
+            /* 等待握手状态：收到主机的握手指令 */
+            g_slave_state = SLAVE_STATE_ACTIVE;
+            LOG_I("Handshake completed! Enter ACTIVE state");
+        } else {
+            /* 活动状态：响应主机的握手查询 */
+            LOG_D("Handshake query in ACTIVE state");
+        }
+        
+        slave_send_response_frame(CMD_HAND_SHAKE, &result);
+        break;
+    case CMD_GET_SOFTWARE_VERSION:
+        cmd_handle_get_software_version(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_SOFTWARE_VERSION, &result);
+        break;
+    case CMD_SET_HARDWARE_VERSION:
+        cmd_handle_set_hardware_version(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_HARDWARE_VERSION, &result);
+        break;
+    case CMD_GET_HARDWARE_VERSION:
+        cmd_handle_get_hardware_version(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_HARDWARE_VERSION, &result);
+        break;
+    case CMD_SET_SERIAL_NUMBER:
+        cmd_handle_set_serial_number(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_SERIAL_NUMBER, &result);
+        break;
+    case CMD_GET_SERIAL_NUMBER:
+        cmd_handle_get_serial_number(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_SERIAL_NUMBER, &result);
         break;
     case CMD_CTRL_SOFT_RESET:
-        slave_handle_sys_reset(payload, payload_len);
+        cmd_handle_sys_reset(payload, payload_len, &result);
+        slave_send_response_frame(CMD_CTRL_SOFT_RESET, &result);
         break;
     case CMD_CTRL_SELF_CHECK:
-        slave_handle_self_check(payload, payload_len);
+        cmd_handle_self_check(payload, payload_len, &result);
+        slave_send_response_frame(CMD_CTRL_SELF_CHECK, &result);
         break;
     case CMD_CTRL_LOW_POWER_MODE:
-        slave_handle_low_power_mode(payload, payload_len);
+        cmd_handle_low_power_mode(payload, payload_len, &result);
+        slave_send_response_frame(CMD_CTRL_LOW_POWER_MODE, &result);
         break;
     case CMD_CTRL_IAP:
-        slave_handle_iap(payload, payload_len);
+        cmd_handle_iap(payload, payload_len, &result);
+        slave_send_response_frame(CMD_CTRL_IAP, &result);
         break;
     case CMD_CTRL_UPLOAD_MODE:
-        slave_handle_upload_mode(payload, payload_len);
+        cmd_handle_upload_mode(payload, payload_len, &result);
+        slave_send_response_frame(CMD_CTRL_UPLOAD_MODE, &result);
         break;
     case CMD_STATUS_UPLOAD:
-        slave_handle_status_upload(payload, payload_len);
+        cmd_handle_status_upload(payload, payload_len, &result);
+        /* 状态上传是非应答型命令，不需要回复 */
         break;
     case CMD_SET_OCD_VOLTAGE_THRESHOLD:
-        slave_handle_set_ocd_voltage_threshold(payload, payload_len);
+        cmd_handle_set_ocd_voltage_threshold(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_OCD_VOLTAGE_THRESHOLD, &result);
         break;
     case CMD_GET_OCD_VOLTAGE_THRESHOLD:
-        slave_handle_get_ocd_voltage_threshold(payload, payload_len);
+        cmd_handle_get_ocd_voltage_threshold(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_OCD_VOLTAGE_THRESHOLD, &result);
+        break;
+    case CMD_CTRL_PULSE_ENGINE_START:
+        cmd_handle_pulse_engine_start(payload, payload_len, &result);
+        slave_send_response_frame(CMD_CTRL_PULSE_ENGINE_START, &result);
+        break;
+    case CMD_GET_PULSE_ENGINE_STATUS:
+        cmd_handle_get_pulse_engine_status(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_PULSE_ENGINE_STATUS, &result);
+        break;
+    case CMD_SET_PULSE_ENGINE_TRIGGER_MODE:
+        cmd_handle_set_pulse_engine_trigger_mode(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_PULSE_ENGINE_TRIGGER_MODE, &result);
+        break;
+    case CMD_GET_PULSE_ENGINE_TRIGGER_MODE:
+        cmd_handle_get_pulse_engine_trigger_mode(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_PULSE_ENGINE_TRIGGER_MODE, &result);
+        break;
+    case CMD_SET_PULSE_ENGINE_PARAMETERS:
+        cmd_handle_set_pulse_engine_parameters(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_PULSE_ENGINE_PARAMETERS, &result);
+        break;
+    case CMD_GET_PULSE_ENGINE_PARAMETERS:
+        cmd_handle_get_pulse_engine_parameters(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_PULSE_ENGINE_PARAMETERS, &result);
+        break;
+    case CMD_SET_ECG_SYNC_TRIGGER_PARAMETERS:
+        cmd_handle_set_ecg_sync_trigger_parameters(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_ECG_SYNC_TRIGGER_PARAMETERS, &result);
+        break;
+    case CMD_GET_ECG_SYNC_TRIGGER_PARAMETERS:
+        cmd_handle_get_ecg_sync_trigger_parameters(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_ECG_SYNC_TRIGGER_PARAMETERS, &result);
         break;
     default:
-        /* 其他命令交给命令处理服务 */
+        /* 未知命令 */
         if (g_slave_state == SLAVE_STATE_ACTIVE) {
-            cmd_handler_process(cmd, payload, payload_len);
+            result.ack_code = ACK_ERR_INVALID_PARAM;
+            result.resp_len = 0;
+            slave_send_response_frame(cmd, &result);
         }
         break;
     }
 }
  
- /**
-  * @brief 错误回调函数
-  * @param p 协议解析器实例指针（未使用）
-  * @param err 错误码
-  */
-static void slave_on_error(proto_t *p, int err)
-{
-    (void)p;
-    
-    switch (err) {
-    case PROTO_ERR_TIMEOUT:
-        LOG_I("Frame reception timeout, state=%d", (int)p->state);
-        break;
-    case PROTO_ERR_CHECKSUM:
-        LOG_I("CRC checksum failed, state=%d, cur_len=%d", 
-              (int)p->state, (int)p->cur_len);
-        break;
-    case PROTO_ERR_LEN_FIELD:
-        LOG_I("Frame length errno, state=%d", (int)p->state);
-        break;
-    case PROTO_ERR_TAIL:
-        LOG_I("Frame tail errno, state=%d", (int)p->state);
-    default:
-        LOG_I("Parser error: %d, state=%d", err, (int)p->state);
-        break;
-    }
-}
 
 /**
- * @brief 从机专用的帧构建函数
+ * @brief 从机专用的命令帧构建函数（用于握手等命令帧）
  * @param out 输出缓冲区指针
  * @param out_size 输出缓冲区大小
  * @param cmd 命令码
@@ -286,10 +392,62 @@ static inline int slave_build_frame(uint8_t *out, uint16_t out_size,
                                     uint16_t data_len)
 {
     return custom_build_frame(out, out_size,
-                             SLAVE_DEVICE_ADDR,      /* 使用固定设备地址 */
+                             PRODUCT_ADDR,      /* 使用固定产品地址 */
                              cmd,
-                             SLAVE_MODULE_ADDR,      /* 使用固定模块地址 */
+                             MODULE_ADDR,      /* 使用固定模块地址 */
                              data, data_len);
+}
+
+/**
+ * @brief 从机专用的应答帧构建函数
+ * @param out 输出缓冲区指针
+ * @param out_size 输出缓冲区大小
+ * @param cmd 命令码
+ * @param ack 应答码
+ * @param data 数据载荷指针（可为NULL）
+ * @param data_len 数据载荷长度
+ * @retval >=0 构建的帧长度（字节数）
+ * @retval -1 失败（缓冲区太小或参数无效）
+ */
+static inline int slave_build_response_frame(uint8_t *out, uint16_t out_size,
+                                             uint8_t cmd, uint8_t ack,
+                                             const uint8_t *data, 
+                                             uint16_t data_len)
+{
+    return custom_build_response_frame(out, out_size,
+                                      PRODUCT_ADDR,      /* 使用固定产品地址 */
+                                      cmd,
+                                      MODULE_ADDR,      /* 使用固定模块地址 */
+                                      ack,
+                                      data, data_len);
+}
+
+/**
+ * @brief 构建并发送应答帧
+ * @param cmd 命令码
+ * @param result 命令处理结果
+ * @details 根据命令处理结果构建应答帧并发送
+ */
+static void slave_send_response_frame(uint8_t cmd, const cmd_result_t *result)
+{
+    uint8_t frame[512U];
+    int flen;
+    
+    if (result == NULL) {
+        return;
+    }
+    
+    /* 构建应答帧 */
+    flen = slave_build_response_frame(frame, (uint16_t)sizeof(frame),
+                                     cmd,
+                                     result->ack_code,
+                                     result->resp_data,
+                                     result->resp_len);
+    
+    /* 发送应答帧 */
+    if ((flen > 0) && (port != NULL)) {
+        (void)serial_write(port, frame, (uint16_t)flen);
+    }
 }
 
 /**
@@ -331,364 +489,20 @@ static void slave_process_handshake(void)
         return;
     }
     
-    current_tick = slave_get_tick();
+    current_tick = HAL_GetTick();
     
     /* 处理时间戳回绕 */
-    if (current_tick >= g_last_handshake_broadcast_tick) {
-        elapsed = current_tick - g_last_handshake_broadcast_tick;
+    if (current_tick >= g_last_handshake_tick) {
+        elapsed = current_tick - g_last_handshake_tick;
     } else {
-        elapsed = (0xFFFFFFFFU - g_last_handshake_broadcast_tick) + current_tick + 1U;
+        elapsed = (0xFFFFFFFFU - g_last_handshake_tick) + current_tick + 1U;
     }
     
     /* 每1秒广播一次 */
     if (elapsed >= HANDSHAKE_INTERVAL_MS) {
         slave_broadcast_handshake_request();
-        g_last_handshake_broadcast_tick = current_tick;
+        g_last_handshake_tick = current_tick;
     }
-}
-
-/**
- * @brief 处理握手命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @details 根据当前状态处理握手：
- *          - 等待握手状态：收到主机握手指令，回应并切换到活动状态
- *          - 活动状态：收到握手请求，简单回应
- */
-static void slave_handle_handshake(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1] = {ACK_OK};
-    uint8_t frame[32U];
-    int flen;
-
-    (void)payload;
-    (void)len;
-
-    if (g_slave_state == SLAVE_STATE_WAIT_HANDSHAKE) {
-        /* 等待握手状态：收到主机的握手指令 */
-        /* 停止广播，切换到活动状态 */
-        g_slave_state = SLAVE_STATE_ACTIVE;
-        LOG_I("Handshake completed! Enter ACTIVE state");
-        
-        /* 使用便捷函数回送握手应答 */
-        flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                                CMD_HAND_SHAKE,         /* 握手应答 */
-                                resp_data,
-                                sizeof(resp_data));
-        
-        if ((flen > 0) && (port != NULL)) {
-            (void)serial_write(port, frame, (uint16_t)flen);
-            LOG_D("Send handshake ACK");
-        }
-    } else {
-        /* 活动状态：响应主机的握手查询 */
-        flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                                CMD_HAND_SHAKE,         /* 握手应答 */
-                                resp_data,
-                                sizeof(resp_data));
-        
-        if ((flen > 0) && (port != NULL)) {
-            (void)serial_write(port, frame, (uint16_t)flen);
-        }
-    }
-}
-
-/**
- * @brief 处理系统复位命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- */
-static void slave_handle_sys_reset(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1] = {ACK_OK};
-    uint8_t frame[32U];
-    int flen;
-
-    (void)payload;
-    (void)len;
-
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_CTRL_SOFT_RESET,
-                            resp_data,
-                            sizeof(resp_data));
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-    
-    /* 延时后执行软件复位（由应用层协调） */
-    extern void major_logic_request_reset(void);
-    major_logic_request_reset();
-}
-
-static void slave_handle_self_check(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1] = {ACK_IN_PROGERESS};  /* 耗时命令先应答正在执行 */
-    uint8_t frame[32U];
-    int flen;
-
-    (void)payload;
-    (void)len;
-
-    /* 使用便捷函数先应答ACK_IN_PROGERESS */
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_CTRL_SELF_CHECK,
-                            resp_data,
-                            sizeof(resp_data));
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-    
-    /* TODO: 在后台任务中执行自检，完成后发送ACK_TASK_DONE */
-}
-
-static void slave_handle_low_power_mode(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1] = {ACK_OK};
-    uint8_t frame[32U];
-    int flen;
-
-    (void)payload;
-    (void)len;
-
-    
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_CTRL_LOW_POWER_MODE,
-                            resp_data,
-                            sizeof(resp_data));
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-}
-
-static void slave_handle_iap(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1] = {ACK_IN_PROGERESS};  /* 耗时命令先应答正在执行 */
-    uint8_t frame[32U];
-    int flen;
-
-    (void)payload;
-    (void)len;
-
-    /* 使用便捷函数先应答ACK_IN_PROGERESS */
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_CTRL_IAP,
-                            resp_data,
-                            sizeof(resp_data));
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-    
-    /* TODO: 在后台任务中执行IAP，完成后发送ACK_TASK_DONE */
-}
-
-static void slave_handle_upload_mode(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1] = {ACK_OK};
-    uint8_t frame[32U];
-    int flen;
-
-    (void)payload;
-    (void)len;
-
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_CTRL_UPLOAD_MODE,
-                            resp_data,
-                            sizeof(resp_data));
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-}
-
-static void slave_handle_status_upload(const uint8_t *payload, uint16_t len)
-{
-    (void)payload;
-    (void)len;
-    
-    /* 状态上传是非应答型命令，不需要回复 */
-    LOG_D("Status upload received (no ACK required)");
-}
-
-/**
- * @brief 过流阈值存储（单位：mV）
- */
-static uint16_t g_ocd_threshold_ch1 = 0U;  /**< 通道1阈值 */
-static uint16_t g_ocd_threshold_ch2 = 0U;  /**< 通道2阈值 */
-
-/**
- * @brief 电压转DAC值
- * @param voltage_mv 电压值（毫伏）
- * @return DAC寄存器值（12位，0-4095）
- * @note 假设VREF = 3.3V = 3300mV
- */
-static uint16_t voltage_to_dac_value(uint16_t voltage_mv)
-{
-    /* DAC参考电压：3.3V = 3300mV */
-    const uint16_t VREF_MV = 3300U;
-    const uint16_t DAC_MAX = 4095U;
-    uint32_t dac_value;
-    
-    /* 计算：DAC值 = (电压 / VREF) * 4095 */
-    dac_value = ((uint32_t)voltage_mv * DAC_MAX) / VREF_MV;
-    
-    /* 限制在有效范围内 */
-    if (dac_value > DAC_MAX) {
-        dac_value = DAC_MAX;
-    }
-    
-    return (uint16_t)dac_value;
-}
-
-/**
- * @brief DAC值转电压
- * @param dac_value DAC寄存器值（12位）
- * @return 电压值（毫伏）
- */
-static uint16_t dac_value_to_voltage(uint16_t dac_value)
-{
-    const uint16_t VREF_MV = 3300U;
-    const uint16_t DAC_MAX = 4095U;
-    uint32_t voltage_mv;
-    
-    /* 计算：电压 = (DAC值 / 4095) * VREF */
-    voltage_mv = ((uint32_t)dac_value * VREF_MV) / DAC_MAX;
-    
-    return (uint16_t)voltage_mv;
-}
-
-static void slave_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[1];
-    uint8_t frame[32U];
-    int flen;
-    uint8_t channel;
-    uint16_t voltage_mv;
-    uint16_t dac_value;
-    HAL_StatusTypeDef status;
-    
-    /* 数据格式：[通道(1字节)] [电压值(2字节，小端)] */
-    if (len != 3U) {
-        resp_data[0] = ACK_ERR_DATA_INVALID_PARAM;
-        flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                                CMD_SET_OCD_VOLTAGE_THRESHOLD,
-                                resp_data,
-                                sizeof(resp_data));
-        if ((flen > 0) && (port != NULL)) {
-            (void)serial_write(port, frame, (uint16_t)flen);
-        }
-        LOG_D("Invalid threshold param length: %d", len);
-        return;
-    }
-    
-    channel = payload[0];
-    voltage_mv = (uint16_t)(payload[1] | (payload[2] << 8));
-    
-    /* 验证通道 */
-    if (channel >= 2U) {
-        resp_data[0] = ACK_ERR_DATA_INVALID_PARAM;
-        flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                                CMD_SET_OCD_VOLTAGE_THRESHOLD,
-                                resp_data,
-                                sizeof(resp_data));
-        if ((flen > 0) && (port != NULL)) {
-            (void)serial_write(port, frame, (uint16_t)flen);
-        }
-        LOG_D("Invalid channel: %d", channel);
-        return;
-    }
-    
-    /* 转换为DAC值 */
-    dac_value = voltage_to_dac_value(voltage_mv);
-    
-    /* 设置DAC */
-    if (channel == 0U) {
-        /* 通道1（ADC1）对应COMP3，COMP3负端使用DAC1 */
-        status = HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-        if (status == HAL_OK) {
-            g_ocd_threshold_ch1 = voltage_mv;
-            resp_data[0] = ACK_OK;
-            LOG_D("Set CH1 (ADC1/COMP3) threshold: %d mV (DAC1=%d)", voltage_mv, dac_value);
-        } else {
-            resp_data[0] = ACK_ERR_OPERATE_ABNORMAL;
-            LOG_E("Failed to set DAC1: %d", status);
-        }
-    } else {
-        /* 通道2（ADC2）对应COMP1，COMP1负端使用DAC3 */
-        status = HAL_DAC_SetValue(&hdac3, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-        if (status == HAL_OK) {
-            g_ocd_threshold_ch2 = voltage_mv;
-            resp_data[0] = ACK_OK;
-            LOG_D("Set CH2 (ADC2/COMP1) threshold: %d mV (DAC3=%d)", voltage_mv, dac_value);
-        } else {
-            resp_data[0] = ACK_ERR_OPERATE_ABNORMAL;
-            LOG_E("Failed to set DAC3: %d", status);
-        }
-    }
-    
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_SET_OCD_VOLTAGE_THRESHOLD,
-                            resp_data,
-                            sizeof(resp_data));
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-}
-
-static void slave_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len)
-{
-    uint8_t resp_data[4];
-    uint8_t frame[32U];
-    int flen;
-    uint8_t channel;
-    
-    /* 数据格式：[通道(1字节)] */
-    if (len != 1U) {
-        resp_data[0] = ACK_ERR_DATA_INVALID_PARAM;
-        flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                                CMD_GET_OCD_VOLTAGE_THRESHOLD,
-                                resp_data,
-                                1U);
-        if ((flen > 0) && (port != NULL)) {
-            (void)serial_write(port, frame, (uint16_t)flen);
-        }
-        LOG_D("Invalid param length: %d", len);
-        return;
-    }
-    
-    channel = payload[0];
-    
-    /* 验证通道 */
-    if (channel >= 2U) {
-        resp_data[0] = ACK_ERR_DATA_INVALID_PARAM;
-        flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                                CMD_GET_OCD_VOLTAGE_THRESHOLD,
-                                resp_data,
-                                1U);
-        if ((flen > 0) && (port != NULL)) {
-            (void)serial_write(port, frame, (uint16_t)flen);
-        }
-        LOG_D("Invalid channel: %d", channel);
-        return;
-    }
-    
-    /* 返回数据格式：[ACK(1字节)] [电压值(2字节，小端)] */
-    resp_data[0] = ACK_OK;
-    if (channel == 0U) {
-        resp_data[1] = (uint8_t)(g_ocd_threshold_ch1 & 0xFFU);
-        resp_data[2] = (uint8_t)((g_ocd_threshold_ch1 >> 8) & 0xFFU);
-    } else {
-        resp_data[1] = (uint8_t)(g_ocd_threshold_ch2 & 0xFFU);
-        resp_data[2] = (uint8_t)((g_ocd_threshold_ch2 >> 8) & 0xFFU);
-    }
-    
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            CMD_GET_OCD_VOLTAGE_THRESHOLD,
-                            resp_data,
-                            3U);
-    if ((flen > 0) && (port != NULL)) {
-        (void)serial_write(port, frame, (uint16_t)flen);
-    }
-    
-    LOG_D("Get CH%d threshold: %d mV", channel, (channel == 0U) ? g_ocd_threshold_ch1 : g_ocd_threshold_ch2);
 }
 
 /**
@@ -738,28 +552,18 @@ void slave_upload_ocp_info(const ocp_info_t *info)
 static void slave_cmd_response_callback(uint8_t cmd, const cmd_result_t *result)
 {
     uint8_t frame[512U];
-    uint8_t resp_data[256U];
     int flen;
-    uint16_t resp_len;
     
     if (result == NULL) {
         return;
     }
     
-    /* 构建响应数据：[ACK] + [结果数据] */
-    resp_data[0] = result->ack_code;
-    if (result->resp_len > 0) {
-        memcpy(&resp_data[1], result->resp_data, result->resp_len);
-        resp_len = 1U + result->resp_len;
-    } else {
-        resp_len = 1U;
-    }
-    
-    /* 构建并发送响应帧 */
-    flen = slave_build_frame(frame, (uint16_t)sizeof(frame),
-                            cmd,
-                            resp_data,
-                            resp_len);
+    /* 构建并发送应答帧，应答码在帧结构中，数据载荷直接使用result->resp_data */
+    flen = slave_build_response_frame(frame, (uint16_t)sizeof(frame),
+                                     cmd,
+                                     result->ack_code,         /* 应答码 */
+                                     result->resp_data,        /* 数据载荷 */
+                                     result->resp_len);         /* 数据长度 */
     
     if ((flen > 0) && (port != NULL)) {
         (void)serial_write(port, frame, (uint16_t)flen);
@@ -774,16 +578,5 @@ static void slave_cmd_response_callback(uint8_t cmd, const cmd_result_t *result)
 slave_state_t slave_get_state(void)
 {
     return g_slave_state;
-}
-
-/**
- * @brief 重置从机到等待握手状态
- * @details 用于系统复位或重新初始化
- */
-void slave_reset_to_handshake(void)
-{
-    g_slave_state = SLAVE_STATE_WAIT_HANDSHAKE;
-    g_last_handshake_broadcast_tick = 0U;
-    LOG_I("Reset to WAIT_HANDSHAKE state");
 }
 

@@ -30,11 +30,6 @@
 
 /*------------------------------ typedef definition ---------------------------*/
 
-/**
- * @brief 过流保护事件回调函数类型
- */
-typedef void (*ocp_event_cb_t)(void);
-
 /*------------------------------ variables prototypes -------------------------*/
 stimer_t led_timer;
 
@@ -42,6 +37,8 @@ stimer_t led_timer;
  * @brief 过流保护事件回调函数指针
  */
 static ocp_event_cb_t g_ocp_callback = NULL;
+
+static struct watchdog_device* iwdg_dev = NULL;
 
 /*------------------------------ function prototypes --------------------------*/
 static void OCP_handle(void *args);
@@ -82,27 +79,33 @@ void safety_init(void)
     stimer_create(&led_timer, 800, STIMER_AUTO_RELOAD, led_timer_callback, (void*)&led_timer);
     stimer_start(&led_timer);
     
-//    MX_IWDG_Init();
+    iwdg_dev = watchdog_find("iwdg");
+    if (iwdg_dev != NULL) {
+        watchdog_set_timeout(iwdg_dev, 1000);
+        watchdog_start(iwdg_dev);
+    }
 }
 
 void safety_task(void)
 {
-    HAL_IWDG_Refresh(&hiwdg);
+    watchdog_ping(iwdg_dev);
 }
 
 void safety_perform_software_reset(void)
 {
+    __disable_irq();
+    
+    // 确保 Flash 操作完成
+    FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
+    
+    IWDG->KR = 0xAAAA;
+    
     // 触发软件复位
     NVIC_SystemReset();
     
-    // 注意：
-    // 1. 复位会立即发生。
-    // 2. 任何在此函数调用之后的代码都不会被执行。
-    // 3. 为防止某些编译器优化或意外情况，可以加一个死循环。
-    while (1)
-    {
-        // 此处代码不应被执行
-    }
+    // 复位指令发出后，CPU 还需要几个时钟周期才能真正复位
+    // 加个死循环防止 CPU 继续往下乱跑
+    while(1) {}
 }
 
 static void OCP_handle(void *args)
@@ -113,8 +116,6 @@ static void OCP_handle(void *args)
     if (g_ocp_callback != NULL) {
         g_ocp_callback();
     }
-    
-    /* 上传信息给上位机 */
 }
 
 /**

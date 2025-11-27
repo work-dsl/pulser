@@ -1,13 +1,13 @@
 /**
  ******************************************************************************
+ * @copyright Copyright (C) 2024 Hangzhou Dinova EP Technology Co.,Ltd
+ *            All rights reserved.
  * @file      pulse_engine.h
  * @author    ZJY
  * @version   V1.0
  * @date      2024-11-06
  * @brief     脉冲引擎模块头文件，提供脉冲序列参数配置和输出控制接口
  *
- * @copyright Copyright (C) 2024 Hangzhou Dinova EP Technology Co.,Ltd
- *            All rights reserved.
  ******************************************************************************
  */
 
@@ -21,6 +21,7 @@ extern "C" {
 /*------------------------------ include -------------------------------------*/
 #include <stdint.h>
 #include <stdbool.h>
+#include "ecg_sync.h"
 
 /*------------------------------ Macro definition ----------------------------*/
 /* 功能配置 */
@@ -128,28 +129,6 @@ typedef enum {
     PULSE_STATUS_ERROR = 3          /**< 错误状态 */
 } pulse_status_t;
 
-
-typedef enum { 
-    SYNC_STATUS_IDLE = 0,          /**< 空闲状态 */
-    SYNC_STATUS_WAIT_R_TRIGGER,    /**< 等待触发R波 */
-    SYNC_STATUS_WAIT_DELAY,        /**< 等待延时（OC） */
-    SYNC_STATUS_PULSING,           /**< 脉冲输出中 */
-    SYNC_STATUS_STOP_TIME,         /**< 停止时间（计数R波） */
-    SYNC_STATUS_WAIT_INTERVAL      /**< 等待R波间隔满足 */
-} sync_state_t;
-
-/**
- * @brief 心电同步触发参数配置结构体
- * @note 工作流程：R波触发 → 延时D → 脉冲序列输出 → 停止时间 → 间隔N个R波 → 重复
- */
-typedef struct {
-    uint16_t trigger_delay_ms;      /**< 触发输出延时，单位：ms，范围：0-300 */
-    uint16_t stop_delay_ms;         /**< 停止时间，单位：ms，范围：200-2000 */
-    uint16_t interval_R;            /**< R波间隔个数，范围：0-30 */
-    uint16_t repeat_count;          /**< 连续触发次数，范围：1-300 */
-} ecg_sync_cfg_t;
-
-
 /**
  * @brief 脉冲输出状态上报结构体
  */
@@ -174,9 +153,6 @@ int32_t pulse_engine_start(void);
 int32_t pulse_engine_stop(void);
 int32_t pulse_engine_get_status(pulse_report_t* report);
 void pulse_engine_notify_output_complete(void);
-
-void ECG_SYNC_Start(const volatile ecg_sync_cfg_t *cfg);
-void ECG_SYNC_Cancel(void);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,7 @@
 /**
  ******************************************************************************
+ * @copyright Copyright (C) 2024 Hangzhou Dinova EP Technology Co.,Ltd
+ *            All rights reserved.
  * @file      pulse_engine.c
  * @author    ZJY
  * @version   V1.0
@@ -10,12 +12,11 @@
  *            1. 正常模式：由控制命令启动输出
  *            2. 心电同步模式：等待心电R波触发后延时输出
  *
- * @copyright Copyright (C) 2024 Hangzhou Dinova EP Technology Co.,Ltd
- *            All rights reserved.
  ******************************************************************************
  */
 /*------------------------------ include -------------------------------------*/
 #include "pulse_engine.h"
+#include "ecg_sync.h"
 #include "bsp_conf.h"
 #include "bsp_hrtim.h"
 #include "bsp_tim.h"
@@ -24,10 +25,10 @@
 #include <string.h>
 
 /*------------------------------ Macro definition ----------------------------*/
-#define HRTIM_COMPARE_DISABLED_VALUE    (0xFFFBU)   /**< HRTIM比较禁用值 */
-#define TRAIN_GAP_MIN_TICKS             (332U)      /**< 最小串间隙tick值 */
+#define HRTIM_COMPARE_DISABLED_VALUE    (0xFFFBU)     /**< HRTIM比较禁用值 */
+#define TRAIN_GAP_MIN_TICKS             (332U)        /**< 最小串间隙tick值 */
 #define TIMER_CLOCK_FREQUENCY           (170000000UL) /**< 定时器时钟频率(Hz) */
-#define MS_TO_NS_MULTIPLIER             (1000000UL) /**< 毫秒转纳秒乘数 */
+#define MS_TO_NS_MULTIPLIER             (1000000UL)   /**< 毫秒转纳秒乘数 */
 
 #define TIM_HZ   100000u
 #define TICK_MS  100u
@@ -64,17 +65,6 @@ typedef struct {
     volatile uint32_t   train_gap_buf[TRAIN_PER_GROUP_NUM_MAX]; /**< 串间隙硬件参数缓冲区 */
 } pulse_hw_config_t;
 
-/**
- * @brief 心电同步状态结构体
- * @note 所有成员在中断和主程序间共享，必须使用volatile
- */
-typedef struct {
-    ecg_sync_cfg_t  cfg;              /**< 心电同步配置参数（中断中读取） */
-    sync_state_t    state;            /**< 当前同步状态 */
-    uint16_t        r_cnt_stop;       /**< 停止时间内计到的R波个数 */
-    uint16_t        repeats_left;     /**< 剩余重复次数 */
-} ecg_sync_state_t;
-
 /*------------------------------ variables prototypes ------------------------*/
 /** @brief 脉冲参数管理 */
 static pulse_param_mgmt_t g_params = {0};
@@ -91,9 +81,6 @@ static pulse_control_t g_control = {
 /** @brief 硬件配置（DMA缓冲区存放在外部SRAM） */
 static EXTSRAM pulse_hw_config_t g_hw_config = {0};
 
-/** @brief 心电同步状态 */
-static volatile ecg_sync_state_t g_ecg_sync = {0};
-
 /*------------------------------ function prototypes -------------------------*/
 static bool param_is_valid(const pulse_params_t *param);
 static void config_next_group_params(uint8_t group_idx);
@@ -102,9 +89,7 @@ static void stop_pulse_output(void);
 static int32_t pulse_out_set_hardware(void);
 static int32_t pulse_out_set_group_gap(uint16_t gap_value);
 static void start_pulse_internal(void);
-static void go_wait_r_trigger(void);
-static void config_stop_time_timer(uint32_t stop_time_ms);
-static void config_delay_timer(uint32_t delay_ms);
+static void on_ecg_trigger_callback(void);
 
 /*------------------------------ application ---------------------------------*/
 
@@ -129,9 +114,14 @@ void pulse_engine_init(void)
     g_params.group_gap_ms = 0U;
     (void)memset(g_params.seq_buf, 0, sizeof(g_params.seq_buf));
     
-    /* 初始化心电同步状态结构体 */
-    (void)memset((void *)&g_ecg_sync, 0, sizeof(g_ecg_sync));
-    g_ecg_sync.state = SYNC_STATUS_IDLE;
+    /* 初始化心电同步模块 */
+    ecg_sync_init();
+    
+    /* 设置心电触发回调 */
+    ecg_sync_set_trigger_callback(on_ecg_trigger_callback);
+    
+    /* 设置脉冲输出完成回调 */
+    ecg_sync_set_pulse_complete_callback(pulse_engine_notify_output_complete);
 }
 
 /**
@@ -195,23 +185,8 @@ int32_t pulse_engine_set_sync_param(const ecg_sync_cfg_t* config)
 {
     int32_t result = -1;
     
-    if (config != NULL) {
-        if ((config->trigger_delay_ms <= 300U) && 
-            (config->stop_delay_ms >= 200U) && (config->stop_delay_ms <= 2000U) &&
-            (config->interval_R <= 30U) &&
-            (config->repeat_count >= 1U) && (config->repeat_count <= 300U)) {
-            if (g_control.status != PULSE_STATUS_RUNNING) {
-                (void)memcpy((void *)&g_ecg_sync.cfg, config, sizeof(ecg_sync_cfg_t));
-                
-                /* 配置触发延时定时器（TIM7） */
-                config_delay_timer(config->trigger_delay_ms);
-                
-                /* 配置停止时间定时器（TIM15） */
-                config_stop_time_timer(config->stop_delay_ms);
-                
-                result = 0;
-            }
-        }
+    if (g_control.status != PULSE_STATUS_RUNNING) {
+        result = ecg_sync_set_param(config);
     }
     
     return result;
@@ -228,14 +203,7 @@ int32_t pulse_engine_set_sync_param(const ecg_sync_cfg_t* config)
  */
 int32_t pulse_engine_get_sync_param(ecg_sync_cfg_t* config)
 {
-    int32_t result = -1;
-    
-    if (config != NULL) {
-        (void)memcpy(config, (const void *)&g_ecg_sync.cfg, sizeof(ecg_sync_cfg_t));
-        result = 0;
-    }
-    
-    return result;
+    return ecg_sync_get_param(config);
 }
 
 /**
@@ -481,11 +449,7 @@ static int32_t pulse_out_set_hardware(void)
         g_hw_config.dma_buf[i].repetion_B = (param->periods_per_train * param->train_per_group) - 1U;
         
         /* 串间隙配置 */
-        if (param->train_gap == 0U) {
-            g_hw_config.train_gap_buf[i] = TRAIN_GAP_MIN_TICKS;
-        } else {
-            g_hw_config.train_gap_buf[i] = tim_arr_from_ms(param->train_gap);
-        }
+        g_hw_config.train_gap_buf[i] = tim_arr_from_ms(param->train_gap);
     }
     
     /* 群间隙配置 */
@@ -535,14 +499,13 @@ int32_t pulse_engine_start(void)
                 g_control.status = PULSE_STATUS_RUNNING;
                 g_control.group_cnt = 0U;
                 
-                /* 心电同步模式首次启动时重置计数 */
-                if ((g_control.output_count == 0U) || (g_control.output_count >= g_ecg_sync.cfg.repeat_count)) {
-                    g_control.output_count = 0U;
-                }
-                
                 /* 启动心电R波检测模块，等待触发 */
-                ECG_SYNC_Start(&g_ecg_sync.cfg);
-                result = 0;
+                if (ecg_sync_start() == 0) {
+                    result = 0;
+                } else {
+                    /* 启动失败，恢复状态 */
+                    g_control.status = PULSE_STATUS_IDLE;
+                }
             } else {
                 /* 未知模式 */
             }
@@ -575,7 +538,7 @@ int32_t pulse_engine_stop(void)
     
     /* 如果是心电同步模式，停止心电检测 */
     if (g_control.mode == PULSE_MODE_ECG_SYNC) {
-        ECG_SYNC_Cancel();
+        ecg_sync_cancel();
     }
     
     g_control.status = PULSE_STATUS_IDLE;
@@ -668,180 +631,16 @@ static inline void start_pulse_internal(void)
 }
 
 /**
- * @brief 进入等待触发R波状态
- *
- * @return 无
- */
-static inline void go_wait_r_trigger(void)
-{
-    g_ecg_sync.state = SYNC_STATUS_WAIT_R_TRIGGER;
-    g_ecg_sync.r_cnt_stop = 0U;
-}
-
-/**
- * @brief 配置停止时间定时器（TIM15）
- *
- * @param[in] stop_time_ms 停止时间(ms)
- *
- * @return 无
- */
-static void config_stop_time_timer(uint32_t stop_time_ms)
-{
-    uint16_t psc = 0U;
-    uint16_t arr = 0U;
-    uint64_t actual_ns = 0UL;
-    
-    tim_pick_psc_arr_from_ns(TIMER_CLOCK_FREQUENCY,
-                             stop_time_ms * MS_TO_NS_MULTIPLIER,
-                             &psc,
-                             &arr,
-                             &actual_ns);
-    
-    __HAL_TIM_SET_PRESCALER(&htim15, psc);
-    __HAL_TIM_SET_AUTORELOAD(&htim15, arr);
-    __HAL_TIM_SET_COUNTER(&htim15, 0U);
-}
-
-/**
- * @brief 配置触发延时定时器（TIM7）
- *
- * @param[in] delay_ms 触发延时(ms)
- *
- * @return 无
- */
-static void config_delay_timer(uint32_t delay_ms)
-{
-    uint16_t psc = 0U;
-    uint16_t arr = 0U;
-    uint64_t actual_ns = 0UL;
-    
-    tim_pick_psc_arr_from_ns(TIMER_CLOCK_FREQUENCY,
-                             delay_ms * MS_TO_NS_MULTIPLIER,
-                             &psc,
-                             &arr,
-                             &actual_ns);
-    
-    __HAL_TIM_SET_PRESCALER(&htim7, psc);
-    __HAL_TIM_SET_AUTORELOAD(&htim7, arr);
-    __HAL_TIM_SET_COUNTER(&htim7, 0U);
-}
-
-/**
- * @brief 启动心电同步触发
- *
- * @param[in] cfg 心电同步配置参数指针（可接受volatile限定符）
+ * @brief 心电触发回调函数
  *
  * @return 无
  *
- * @details 启动时只启动输入捕获中断等待R波，
- *          触发延时使用TIM6定时器实现
+ * @details 当心电同步模块检测到R波并延时到达时，调用此函数启动脉冲输出
  */
-void ECG_SYNC_Start(const volatile ecg_sync_cfg_t *cfg)
+static void on_ecg_trigger_callback(void)
 {
-    if (cfg != NULL) {
-        g_ecg_sync.cfg          = *cfg;
-        g_ecg_sync.repeats_left = (cfg->repeat_count != 0U) ? cfg->repeat_count : 1U;
-        g_ecg_sync.r_cnt_stop   = 0U;
-
-        __HAL_TIM_CLEAR_FLAG(&htim4, TIM_FLAG_CC1);
-        __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_CC1);
-        __HAL_TIM_ENABLE(&htim4);
-        
-        go_wait_r_trigger();
-    }
+    start_pulse_internal();
 }
-
-/**
- * @brief 取消心电同步触发
- *
- * @return 无
- *
- * @details 停止所有心电检测中断并重置状态
- */
-void ECG_SYNC_Cancel(void)
-{
-    g_ecg_sync.state = SYNC_STATUS_IDLE;
-    
-    /* 停止输入捕获中断（检测R波） */
-    __HAL_TIM_DISABLE(&htim4);
-    
-    /* 停止所有定时器 */
-    __HAL_TIM_DISABLE(&htim6);
-    __HAL_TIM_DISABLE(&htim7);
-    __HAL_TIM_DISABLE(&htim15);
-}
-
-/**
- * @brief HAL回调函数：捕获到R波
- *
- * @param[in] htim 定时器句柄指针
- *
- * @return 无
- *
- * @details 根据当前状态处理R波事件：
- *          1. WAIT_R_TRIGGER: 启动延时定时器
- *          2. STOP_TIME: 计数R波
- *          3. WAIT_INTERVAL: 检查间隔条件，满足则启动下一轮
- */
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance != TIM4) {
-        return;
-    }
-    
-    switch (g_ecg_sync.state)
-    {
-        case SYNC_STATUS_WAIT_R_TRIGGER:
-            /* 检测到触发R波，启动延时 */
-            g_ecg_sync.state = SYNC_STATUS_WAIT_DELAY;
-            
-            /* 关闭输入捕获中断（延时和脉冲输出期间不需要检测R波） */
-            __HAL_TIM_DISABLE(&htim4);
-            
-            /* 启动TIM7触发延时定时器（已在设置参数时配置好） */
-            __HAL_TIM_SET_COUNTER(&htim7, 0U);
-            __HAL_TIM_ENABLE(&htim7);
-            break;
-            
-        case SYNC_STATUS_STOP_TIME:
-            /* 停止时间内，计数R波 */
-            g_ecg_sync.r_cnt_stop++;
-            break;
-            
-        case SYNC_STATUS_WAIT_INTERVAL:
-            /* 继续计数R波 */
-            g_ecg_sync.r_cnt_stop++;
-            
-            /* 检查间隔条件是否满足 */
-            if (g_ecg_sync.r_cnt_stop >= g_ecg_sync.cfg.interval_R) {
-                /* 条件满足，检查是否还有重复次数 */
-                if (g_ecg_sync.repeats_left > 0U) {
-                    g_ecg_sync.repeats_left--;
-                    
-                    if (g_ecg_sync.repeats_left > 0U) {
-                        /* 还有重复次数，启动下一轮 */
-                        g_ecg_sync.state = SYNC_STATUS_WAIT_DELAY;
-                        
-                        /* 关闭输入捕获中断（延时和脉冲输出期间不需要检测R波） */
-                        __HAL_TIM_DISABLE(&htim4);
-                        
-                        /* 启动TIM7触发延时定时器（已在设置参数时配置好） */
-                        __HAL_TIM_SET_COUNTER(&htim7, 0U);
-                        __HAL_TIM_ENABLE(&htim7);
-                    } else {
-                        /* 所有重复完成，设置为空闲状态 */
-                        g_ecg_sync.state = SYNC_STATUS_IDLE;
-                    }
-                }
-            }
-            break;
-            
-        default:
-            /* 其他状态，忽略R波 */
-            break;
-    }
-}
-
 
 /**
  * @brief HRTIM定时器B全局中断处理函数
@@ -877,23 +676,12 @@ void HRTIM1_TIMB_IRQHandler(void)
             
             /* 根据模式处理完成逻辑 */
             if (g_control.mode == PULSE_MODE_ECG_SYNC) {
-                /* 心电同步模式：脉冲输出完成，进入停止时间 */
+                /* 心电同步模式：通知心电同步模块脉冲输出完成 */
                 pulse_engine_notify_output_complete();
+                ecg_sync_notify_pulse_complete();
                 
-                if (g_ecg_sync.state == SYNC_STATUS_PULSING) {
-                    /* 进入停止时间，重置R波计数 */
-                    g_ecg_sync.state = SYNC_STATUS_STOP_TIME;
-                    g_ecg_sync.r_cnt_stop = 0U;
-                    
-                    /* 重新启动输入捕获中断（需要在停止时间内计数R波） */
-                    __HAL_TIM_CLEAR_FLAG(&htim4, TIM_FLAG_CC1);
-                    __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_CC1);
-                    __HAL_TIM_ENABLE(&htim4);
-                    
-                    /* 启动TIM15停止时间定时器（已在设置参数时配置好） */
-                    __HAL_TIM_SET_COUNTER(&htim15, 0U);
-                    __HAL_TIM_ENABLE(&htim15);
-                } else {
+                /* 检查心电同步是否已完成所有重复 */
+                if (ecg_sync_get_state() == SYNC_STATUS_IDLE) {
                     /* 所有重复已完成，切换到空闲状态 */
                     g_control.status = PULSE_STATUS_IDLE;
                 }
@@ -915,8 +703,8 @@ void HRTIM1_TIMB_IRQHandler(void)
  *
  * @details 三个定时器的用途：
  *          1. TIM6：群间隙定时器（正常模式和心电同步模式都会用）
- *          2. TIM7：触发延时定时器（仅心电同步模式）
- *          3. TIM15：停止时间定时器（仅心电同步模式）
+ *          2. TIM7：触发延时定时器（仅心电同步模式，由ecg_sync模块处理）
+ *          3. TIM15：停止时间定时器（仅心电同步模式，由ecg_sync模块处理）
  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -925,22 +713,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         /* 群间隙定时器超时，启动下一组脉冲输出 */
         start_pulse_output();
         __HAL_TIM_DISABLE(&htim6);
-    } else if (htim->Instance == TIM7) {
-        /* 触发延时到达，启动脉冲输出 */
-        __HAL_TIM_DISABLE(&htim7);
-        g_ecg_sync.state = SYNC_STATUS_PULSING;
-        start_pulse_internal();
-    } else if (htim->Instance == TIM15) {
-        /* 停止时间结束，进入等待间隔状态 */
-        __HAL_TIM_DISABLE(&htim15);
-        g_ecg_sync.state = SYNC_STATUS_WAIT_INTERVAL;
-        
-        /* 立即检查间隔条件是否已满足 */
-        if (g_ecg_sync.r_cnt_stop >= g_ecg_sync.cfg.interval_R) {
-            /* 条件已满足，等待下一个R波触发 */
-            go_wait_r_trigger();
-        }
-        /* 否则继续等待R波，在IC回调中检查条件 */
+    } else if ((htim->Instance == TIM7) || (htim->Instance == TIM15)) {
+        /* TIM7和TIM15由心电同步模块处理 */
+        ecg_sync_handle_timer_period_elapsed(htim);
+    } else {
+        /* 其他定时器，不做处理 */
     }
 }
 

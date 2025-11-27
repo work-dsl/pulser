@@ -19,6 +19,9 @@
 #include "custom_slave.h"
 #include "data_mgmt.h"
 #include "pulse_engine.h"
+#include "major_logic.h"
+#include "bsp_dac.h"
+#include "stm32g4xx_hal.h"
 
 #define  LOG_TAG             "cmd_handler"
 #define  LOG_LVL             4
@@ -42,20 +45,17 @@ static cmd_response_cb_t g_response_callback = NULL;
  */
 static volatile pulse_status_t g_last_pulse_status = PULSE_STATUS_IDLE;
 
+
+/**
+ * @brief 过流阈值存储（单位：mV）
+ */
+static uint16_t g_ocd_threshold_ch1 = 0U;  /**< 通道1阈值 */
+static uint16_t g_ocd_threshold_ch2 = 0U;  /**< 通道2阈值 */
+
 /* Private function prototypes -----------------------------------------------*/
-static void handle_get_software_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_set_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_set_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_get_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_get_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-static void handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+/* 这些函数已改为导出函数，声明在 cmd_handler.h 中 */
+static uint16_t voltage_to_dac_value(uint16_t voltage_mv);
+static uint16_t dac_value_to_voltage(uint16_t dac_value);
 
 /* Exported variables  -------------------------------------------------------*/
 
@@ -64,91 +64,12 @@ static void handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint1
 /* Exported functions --------------------------------------------------------*/
 
 /**
- * @brief 初始化命令处理服务
- */
-void cmd_handler_init(void)
-{
-    g_response_callback = NULL;
-    g_last_pulse_status = PULSE_STATUS_IDLE;
-    
-    LOG_D("Command handler initialized");
-}
-
-/**
  * @brief 设置响应回调函数
  * @param cb 回调函数指针
  */
 void cmd_handler_set_response_callback(cmd_response_cb_t cb)
 {
     g_response_callback = cb;
-}
-
-/**
- * @brief 处理命令
- * @param cmd 命令码
- * @param payload 数据载荷
- * @param len 数据长度
- */
-void cmd_handler_process(uint8_t cmd, const uint8_t *payload, uint16_t len)
-{
-    cmd_result_t result;
-    
-    /* 初始化结果 */
-    result.ack_code = ACK_OK;
-    result.resp_len = 0;
-    
-    /* 根据命令码分发 */
-    switch (cmd) {
-    case CMD_GET_SOFTWARE_VERSION:
-        handle_get_software_version(payload, len, &result);
-        break;
-    case CMD_SET_HARDWARE_VERSION:
-        handle_set_hardware_version(payload, len, &result);
-        break;
-    case CMD_GET_HARDWARE_VERSION:
-        handle_get_hardware_version(payload, len, &result);
-        break;
-    case CMD_SET_SERIAL_NUMBER:
-        handle_set_serial_number(payload, len, &result);
-        break;
-    case CMD_GET_SERIAL_NUMBER:
-        handle_get_serial_number(payload, len, &result);
-        break;
-    case CMD_CTRL_PULSE_ENGINE_START:
-        handle_pulse_engine_start(payload, len, &result);
-        break;
-    case CMD_GET_PULSE_ENGINE_STATUS:
-        handle_get_pulse_engine_status(payload, len, &result);
-        break;
-    case CMD_SET_PULSE_ENGINE_TRIGGER_MODE:
-        handle_set_pulse_engine_trigger_mode(payload, len, &result);
-        break;
-    case CMD_GET_PULSE_ENGINE_TRIGGER_MODE:
-        handle_get_pulse_engine_trigger_mode(payload, len, &result);
-        break;
-    case CMD_SET_PULSE_ENGINE_PARAMETERS:
-        handle_set_pulse_engine_parameters(payload, len, &result);
-        break;
-    case CMD_GET_PULSE_ENGINE_PARAMETERS:
-        handle_get_pulse_engine_parameters(payload, len, &result);
-        break;
-    case CMD_SET_ECG_SYNC_TRIGGER_PARAMETERS:
-        handle_set_ecg_sync_trigger_parameters(payload, len, &result);
-        break;
-    case CMD_GET_ECG_SYNC_TRIGGER_PARAMETERS:
-        handle_get_ecg_sync_trigger_parameters(payload, len, &result);
-        break;
-    default:
-        LOG_I("Unknown cmd: 0x%02X", cmd);
-        result.ack_code = ACK_ERR_DATA_INVALID_PARAM;
-        result.resp_len = 0;
-        break;
-    }
-    
-    /* 调用响应回调 */
-    if (g_response_callback != NULL) {
-        g_response_callback(cmd, &result);
-    }
 }
 
 /**
@@ -212,7 +133,7 @@ void cmd_handler_notify_pulse_complete(void)
 /**
  * @brief 处理获取软件版本命令
  */
-static void handle_get_software_version(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_software_version(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     const char *sw_version;
     uint16_t resp_len;
@@ -232,12 +153,12 @@ static void handle_get_software_version(const uint8_t *payload, uint16_t len, cm
 /**
  * @brief 处理设置硬件版本命令
  */
-static void handle_set_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_set_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
 
     if (len == 0U || len >= HW_VERSION_BUFSZ) {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
     } else {
         ret = data_mgmt_set_hw_version((const char *)payload, len);
@@ -249,7 +170,7 @@ static void handle_set_hardware_version(const uint8_t *payload, uint16_t len, cm
 /**
  * @brief 处理获取硬件版本命令
  */
-static void handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     const char *hw_version;
     uint16_t resp_len;
@@ -269,12 +190,12 @@ static void handle_get_hardware_version(const uint8_t *payload, uint16_t len, cm
 /**
  * @brief 处理设置序列号命令
  */
-static void handle_set_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_set_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
 
     if (len == 0U || len >= SN_NUMBER_BUFSZ) {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
     } else {
         ret = data_mgmt_set_sn_number((const char *)payload, len);
@@ -286,7 +207,7 @@ static void handle_set_serial_number(const uint8_t *payload, uint16_t len, cmd_r
 /**
  * @brief 处理获取序列号命令
  */
-static void handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     const char *sn_number;
     uint16_t resp_len;
@@ -306,13 +227,13 @@ static void handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_r
 /**
  * @brief 处理控制脉冲序列输出命令
  */
-static void handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     uint8_t control;
     
     if (len != 1U) {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
         return;
     }
@@ -339,7 +260,7 @@ static void handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_
             LOG_D("Failed to start pulse engine");
         }
     } else {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
     }
     
     result->resp_len = 0;
@@ -348,7 +269,7 @@ static void handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_
 /**
  * @brief 处理获取脉冲引擎状态命令
  */
-static void handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     pulse_report_t report;
@@ -375,13 +296,13 @@ static void handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len,
 /**
  * @brief 处理设置脉冲输出模式命令
  */
-static void handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     pulse_mode_t mode;
 
     if (len != 1U) {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
         return;
     }
@@ -402,7 +323,7 @@ static void handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_
 /**
  * @brief 处理获取脉冲输出模式命令
  */
-static void handle_get_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     pulse_mode_t mode;
@@ -425,13 +346,13 @@ static void handle_get_pulse_engine_trigger_mode(const uint8_t *payload, uint16_
 /**
  * @brief 处理设置脉冲序列参数命令
  */
-static void handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     pulse_params_t params;
 
     if (len != sizeof(pulse_params_t)) {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
         LOG_D("Invalid param length: %d, expected: %d", len, sizeof(pulse_params_t));
         return;
@@ -444,7 +365,7 @@ static void handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t 
         result->ack_code = ACK_OK;
         LOG_D("Set pulse param: group %d/%d", params.group_num, params.num_of_group);
     } else {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         LOG_D("Failed to set pulse param");
     }
     
@@ -454,7 +375,7 @@ static void handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t 
 /**
  * @brief 处理获取脉冲序列参数命令
  */
-static void handle_get_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     pulse_params_t params[GROUP_NUM_MAX];
@@ -478,13 +399,13 @@ static void handle_get_pulse_engine_parameters(const uint8_t *payload, uint16_t 
 /**
  * @brief 处理设置心电同步触发参数命令
  */
-static void handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     ecg_sync_cfg_t config;
 
     if (len != sizeof(ecg_sync_cfg_t)) {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
         LOG_D("Invalid ECG sync param length: %d, expected: %d", len, sizeof(ecg_sync_cfg_t));
         return;
@@ -498,7 +419,7 @@ static void handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint1
         LOG_D("Set ECG sync: interval=%d, delay=%lu, stop=%lu, repeat=%d", 
               config.interval_R, config.trigger_delay_ms, config.stop_delay_ms, config.repeat_count);
     } else {
-        result->ack_code = ACK_ERR_DATA_INVALID_PARAM;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
         LOG_D("Failed to set ECG sync param");
     }
     
@@ -508,7 +429,7 @@ static void handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint1
 /**
  * @brief 处理获取心电同步触发参数命令
  */
-static void handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+void cmd_handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     int ret;
     ecg_sync_cfg_t config;
@@ -527,5 +448,265 @@ static void handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint1
         result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
         result->resp_len = 0;
     }
+}
+
+/**
+ * @brief 电压转DAC值
+ * @param voltage_mv 电压值（毫伏）
+ * @return DAC寄存器值（12位，0-4095）
+ * @note 假设VREF = 3.3V = 3300mV
+ */
+static uint16_t voltage_to_dac_value(uint16_t voltage_mv)
+{
+    /* DAC参考电压：3.3V = 3300mV */
+    const uint16_t VREF_MV = 3300U;
+    const uint16_t DAC_MAX = 4095U;
+    uint32_t dac_value;
+    
+    /* 计算：DAC值 = (电压 / VREF) * 4095 */
+    dac_value = ((uint32_t)voltage_mv * DAC_MAX) / VREF_MV;
+    
+    /* 限制在有效范围内 */
+    if (dac_value > DAC_MAX) {
+        dac_value = DAC_MAX;
+    }
+    
+    return (uint16_t)dac_value;
+}
+
+/**
+ * @brief DAC值转电压
+ * @param dac_value DAC寄存器值（12位）
+ * @return 电压值（毫伏）
+ */
+static uint16_t dac_value_to_voltage(uint16_t dac_value)
+{
+    const uint16_t VREF_MV = 3300U;
+    const uint16_t DAC_MAX = 4095U;
+    uint32_t voltage_mv;
+    
+    /* 计算：电压 = (DAC值 / 4095) * VREF */
+    voltage_mv = ((uint32_t)dac_value * VREF_MV) / DAC_MAX;
+    
+    return (uint16_t)voltage_mv;
+}
+
+
+/**
+ * @brief 处理系统复位命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_sys_reset(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+    
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+    
+    /* 延时后执行软件复位（由应用层协调） */
+    major_logic_request_reset();
+    LOG_D("System reset requested");
+}
+
+/**
+ * @brief 处理系统自检命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_self_check(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+    
+    /* 耗时命令先应答正在执行 */
+    result->ack_code = ACK_IN_PROGERESS;
+    result->resp_len = 0;
+    
+    /* TODO: 在后台任务中执行自检，完成后发送ACK_OK */
+    LOG_D("Self check started");
+}
+
+/**
+ * @brief 处理低功耗模式命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+    
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+    
+    /* TODO: 实现低功耗模式控制 */
+    LOG_D("Low power mode command received");
+}
+
+/**
+ * @brief 处理在线升级命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+    
+    /* 耗时命令先应答正在执行 */
+    result->ack_code = ACK_IN_PROGERESS;
+    result->resp_len = 0;
+    
+    /* TODO: 在后台任务中执行IAP，完成后发送ACK_OK */
+    LOG_D("IAP started");
+}
+
+/**
+ * @brief 处理上传模式命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+    
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+    
+    /* TODO: 实现上传模式控制 */
+    LOG_D("Upload mode command received");
+}
+
+/**
+ * @brief 处理状态上传命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+    
+    /* 状态上传是非应答型命令，不需要回复 */
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+    
+    LOG_D("Status upload received (no ACK required)");
+}
+
+/**
+ * @brief 处理设置过流检测电压阈值命令
+ * @param payload 数据载荷
+ * @param len 数据载荷长度
+ * @param result 命令处理结果
+ */
+void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    uint8_t channel;
+    uint16_t voltage_mv;
+    uint16_t dac_value;
+    HAL_StatusTypeDef status;
+    
+    /* 数据格式：[通道(1字节)] [电压值(2字节，小端)] */
+    if (len != 3U) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid threshold param length: %d", len);
+        return;
+    }
+    
+    channel = payload[0];
+    voltage_mv = (uint16_t)(payload[1] | (payload[2] << 8));
+    
+    /* 验证通道 */
+    if (channel >= 2U) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid channel: %d", channel);
+        return;
+    }
+    
+    /* 转换为DAC值 */
+    dac_value = voltage_to_dac_value(voltage_mv);
+    
+    /* 设置DAC */
+    if (channel == 0U) {
+        /* 通道1（ADC1）对应COMP3，COMP3负端使用DAC1 */
+        status = HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+        if (status == HAL_OK) {
+            g_ocd_threshold_ch1 = voltage_mv;
+            result->ack_code = ACK_OK;
+            LOG_D("Set CH1 (ADC1/COMP3) threshold: %d mV (DAC1=%d)", voltage_mv, dac_value);
+        } else {
+            result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
+            LOG_E("Failed to set DAC1: %d", status);
+        }
+    } else {
+        /* 通道2（ADC2）对应COMP1，COMP1负端使用DAC3 */
+        status = HAL_DAC_SetValue(&hdac3, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+        if (status == HAL_OK) {
+            g_ocd_threshold_ch2 = voltage_mv;
+            result->ack_code = ACK_OK;
+            LOG_D("Set CH2 (ADC2/COMP1) threshold: %d mV (DAC3=%d)", voltage_mv, dac_value);
+        } else {
+            result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
+            LOG_E("Failed to set DAC3: %d", status);
+        }
+    }
+    
+    result->resp_len = 0;
+}
+
+/**
+ * @brief 处理获取过流检测电压阈值命令
+ * @param payload 数据载荷
+ * @param len 数据载荷长度
+ * @param result 命令处理结果
+ */
+void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    uint8_t channel;
+    uint16_t voltage_mv;
+    
+    /* 数据格式：[通道(1字节)] */
+    if (len != 1U) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid param length: %d", len);
+        return;
+    }
+    
+    channel = payload[0];
+    
+    /* 验证通道 */
+    if (channel >= 2U) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid channel: %d", channel);
+        return;
+    }
+    
+    /* 返回数据格式：[电压值(2字节，小端)] */
+    if (channel == 0U) {
+        voltage_mv = g_ocd_threshold_ch1;
+    } else {
+        voltage_mv = g_ocd_threshold_ch2;
+    }
+    
+    result->resp_data[0] = (uint8_t)(voltage_mv & 0xFFU);
+    result->resp_data[1] = (uint8_t)((voltage_mv >> 8) & 0xFFU);
+    result->ack_code = ACK_OK;
+    result->resp_len = 2U;
+    
+    LOG_D("Get CH%d threshold: %d mV", channel, voltage_mv);
 }
 
