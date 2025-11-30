@@ -316,8 +316,10 @@ void cmd_handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t l
     if (ret == 0) {
         result->ack_code = ACK_OK;
         LOG_D("Set pulse mode: %d", mode);
-    } else {
+    } else if (ret == -1) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
+    } else if (ret == -2) {
+        result->ack_code = ACK_ERR_BUSY;
     }
 
     result->resp_len = 0;

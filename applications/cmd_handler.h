@@ -55,8 +55,6 @@ void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_
 void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_software_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
@@ -71,6 +69,8 @@ void cmd_handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len
 void cmd_handle_get_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 
 #ifdef __cplusplus
 }

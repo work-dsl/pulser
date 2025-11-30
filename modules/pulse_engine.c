@@ -22,6 +22,7 @@
 #include "bsp_tim.h"
 #include "board.h"
 #include "bsp_sram.h"
+#include "errno-base.h"
 #include <string.h>
 
 /*------------------------------ Macro definition ----------------------------*/
@@ -131,18 +132,21 @@ void pulse_engine_init(void)
  *
  * @return int32_t 返回状态
  * @retval  0 设置成功
- * @retval -1 设置失败（参数无效或正在运行中）
+ * @retval -EINVAL 设置失败（参数无效）
+ * @retval -EBUSY 设置失败（正在运行中）
  *
  * @note 只能在IDLE状态下设置模式（非运行状态）
  */
 int32_t pulse_engine_set_mode(pulse_mode_t mode)
 {
-    int32_t result = -1;
+    int32_t result = -EINVAL;
 
     if ((mode == PULSE_MODE_NORMAL) || (mode == PULSE_MODE_ECG_SYNC)) {
         if (g_control.status != PULSE_STATUS_RUNNING) {
             g_control.mode = mode;
             result = 0;
+        } else {
+            result = -EBUSY;
         }
     }
 
@@ -156,11 +160,11 @@ int32_t pulse_engine_set_mode(pulse_mode_t mode)
  *
  * @return int32_t 返回状态
  * @retval  0 获取成功
- * @retval -1 获取失败（参数为空指针）
+ * @retval -EINVAL 获取失败（参数为空指针）
  */
 int32_t pulse_engine_get_mode(pulse_mode_t* mode)
 {
-    int32_t result = -1;
+    int32_t result = -EINVAL;
 
     if (mode != NULL) {
         *mode = g_control.mode;
@@ -177,13 +181,14 @@ int32_t pulse_engine_get_mode(pulse_mode_t* mode)
  *
  * @return int32_t 返回状态
  * @retval  0 设置成功
- * @retval -1 设置失败（参数无效或正在运行中）
+ * @retval -EBUSY 设置失败（正在运行中）
+ * @retval -EINVAL 设置失败（参数无效或参数为空指针，由ecg_sync_set_param返回）
  *
  * @note 必须在非运行状态下设置
  */
 int32_t pulse_engine_set_sync_param(const ecg_sync_cfg_t* config)
 {
-    int32_t result = -1;
+    int32_t result = -EBUSY;
 
     if (g_control.status != PULSE_STATUS_RUNNING) {
         result = ecg_sync_set_param(config);
@@ -199,7 +204,7 @@ int32_t pulse_engine_set_sync_param(const ecg_sync_cfg_t* config)
  *
  * @return int32_t 返回状态
  * @retval  0 获取成功
- * @retval -1 获取失败（参数为空指针）
+ * @retval -EINVAL 获取失败（参数为空指针，由ecg_sync_get_param返回）
  */
 int32_t pulse_engine_get_sync_param(ecg_sync_cfg_t* config)
 {
@@ -213,7 +218,9 @@ int32_t pulse_engine_get_sync_param(ecg_sync_cfg_t* config)
  *
  * @return int32_t 返回状态
  * @retval  0 设置成功
- * @retval -1 设置失败（参数无效、正在运行或缓冲区已满）
+ * @retval -EINVAL 设置失败（参数为空指针、参数无效或群编号不匹配）
+ * @retval -EBUSY 设置失败（正在运行中）
+ * @retval -ENOSPC 设置失败（缓冲区已满）
  *
  * @details 支持分批设置参数，第一个参数的group_num必须为1。
  *          如果接收到group_num=1，会清除之前的所有参数，重新开始。
@@ -223,7 +230,7 @@ int32_t pulse_engine_get_sync_param(ecg_sync_cfg_t* config)
  */
 int32_t pulse_engine_set_seq_param(const pulse_params_t* p)
 {
-    int32_t result = -1;
+    int32_t result = -EINVAL;
 
     if (p != NULL) {
         if (param_is_valid(p)) {
@@ -250,9 +257,17 @@ int32_t pulse_engine_set_seq_param(const pulse_params_t* p)
                             g_control.hardware_configured = true;
                         }
                         result = 0;
+                    } else {
+                        result = -ENOSPC;
                     }
+                } else {
+                    result = -EINVAL;
                 }
+            } else {
+                result = -EBUSY;
             }
+        } else {
+            result = -EINVAL;
         }
     }
 
@@ -267,11 +282,11 @@ int32_t pulse_engine_set_seq_param(const pulse_params_t* p)
  *
  * @return int32_t 返回状态
  * @retval  0 获取成功
- * @retval -1 获取失败（参数为空指针）
+ * @retval -EINVAL 获取失败（参数为空指针）
  */
 int32_t pulse_engine_get_seq_param(pulse_params_t* p, uint16_t* total_groups)
 {
-    int32_t result = -1;
+    int32_t result = -EINVAL;
 
     if ((p != NULL) && (total_groups != NULL)) {
         (void)memcpy(p, g_params.seq_buf, sizeof(pulse_params_t) * g_params.group_num);
@@ -289,11 +304,11 @@ int32_t pulse_engine_get_seq_param(pulse_params_t* p, uint16_t* total_groups)
  *
  * @return int32_t 返回状态
  * @retval  0 获取成功
- * @retval -1 获取失败（参数为空指针）
+ * @retval -EINVAL 获取失败（参数为空指针）
  */
 int32_t pulse_engine_get_status(pulse_report_t* report)
 {
-    int32_t result = -1;
+    int32_t result = -EINVAL;
 
     if (report != NULL) {
         report->mode = g_control.mode;
@@ -464,14 +479,17 @@ static int32_t pulse_out_set_hardware(void)
  *
  * @return int32_t 返回状态
  * @retval  0 启动成功
- * @retval -1 启动失败（参数不完整或正在运行中）
+ * @retval -EINVAL 启动失败（参数不完整或硬件未配置）
+ * @retval -EBUSY 启动失败（正在运行中）
+ * @retval -ENOSYS 启动失败（未知模式）
+ * @retval -EIO 启动失败（心电同步模块启动失败）
  *
  * @details 支持重复启动，使用相同参数多次输出。
  *          根据模式选择立即启动（正常模式）或等待触发（心电同步模式）。
  */
 int32_t pulse_engine_start(void)
 {
-    int32_t result = -1;
+    int32_t result = -EINVAL;
 
     /* 检查参数是否完整 */
     if ((g_params.group_num == g_params.expected_num_of_group) && (g_params.group_num > 0U)) {
@@ -506,9 +524,17 @@ int32_t pulse_engine_start(void)
                 } else {
                     /* 启动失败，恢复状态 */
                     g_control.status = PULSE_STATUS_IDLE;
+                    result = -EIO;
                 }
             } else {
                 /* 未知模式 */
+                result = -ENOSYS;
+            }
+        } else {
+            if (g_control.status == PULSE_STATUS_RUNNING) {
+                result = -EBUSY;
+            } else {
+                result = -EINVAL;
             }
         }
     }
