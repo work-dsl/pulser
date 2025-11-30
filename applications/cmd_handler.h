@@ -47,7 +47,6 @@ typedef void (*cmd_response_cb_t)(uint8_t cmd, const cmd_result_t *result);
 
 /* Exported functions --------------------------------------------------------*/
 
-void cmd_handler_init(void);
 void cmd_handler_set_response_callback(cmd_response_cb_t cb);
 void cmd_handler_notify_pulse_complete(void);
 void cmd_handle_sys_reset(const uint8_t *payload, uint16_t len, cmd_result_t *result);
@@ -63,6 +62,7 @@ void cmd_handle_set_hardware_version(const uint8_t *payload, uint16_t len, cmd_r
 void cmd_handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+
 void cmd_handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);

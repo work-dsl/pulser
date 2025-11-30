@@ -125,8 +125,7 @@ typedef enum {
 typedef enum {
     PULSE_STATUS_IDLE = 0,          /**< 空闲状态 */
     PULSE_STATUS_RUNNING = 1,       /**< 运行状态 */
-    PULSE_STATUS_COMPLETED = 2,     /**< 完成状态 */
-    PULSE_STATUS_ERROR = 3          /**< 错误状态 */
+    PULSE_STATUS_ERROR = 2          /**< 错误状态 */
 } pulse_status_t;
 
 /**

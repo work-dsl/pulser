@@ -82,15 +82,15 @@ void cmd_handler_notify_pulse_complete(void)
     const char *mode_str;
     const char *status_str;
     uint16_t offset;
-    
+
     /* 获取脉冲引擎状态 */
     if (pulse_engine_get_status(&report) != 0) {
         return;
     }
-    
+
     /* 构建上报数据：| 模式字符串 | 状态字符串 | 次数(2字节) | */
     offset = 0;
-    
+
     /* 模式字符串 */
     if (report.mode == PULSE_MODE_NORMAL) {
         mode_str = "Normal";
@@ -100,31 +100,34 @@ void cmd_handler_notify_pulse_complete(void)
     memcpy(&result.resp_data[offset], mode_str, strlen(mode_str));
     offset += strlen(mode_str);
     result.resp_data[offset++] = '|';
-    
+
     /* 状态字符串 */
-    if (report.status == PULSE_STATUS_COMPLETED) {
+    if (report.status == PULSE_STATUS_IDLE && report.count > 0U) {
+        /* 空闲状态且计数>0表示已完成 */
         status_str = "OK";
     } else if (report.status == PULSE_STATUS_ERROR) {
         status_str = "ERROR";
-    } else {
+    } else if (report.status == PULSE_STATUS_RUNNING) {
         status_str = "RUNNING";
+    } else {
+        status_str = "IDLE";
     }
     memcpy(&result.resp_data[offset], status_str, strlen(status_str));
     offset += strlen(status_str);
     result.resp_data[offset++] = '|';
-    
+
     /* 次数(2字节) */
     result.resp_data[offset++] = (uint8_t)(report.count & 0xFFU);
     result.resp_data[offset++] = (uint8_t)((report.count >> 8) & 0xFFU);
-    
+
     result.ack_code = ACK_OK;
     result.resp_len = offset;
-    
+
     /* 调用响应回调 */
     if (g_response_callback != NULL) {
         g_response_callback(CMD_PULSE_ENGINE_STATUS_UPLOAD, &result);
     }
-    
+
     LOG_D("Upload pulse status: %s|%s|%d", mode_str, status_str, report.count);
 }
 
@@ -143,7 +146,7 @@ void cmd_handle_get_software_version(const uint8_t *payload, uint16_t len, cmd_r
 
     sw_version = data_mgmt_get_sw_version();
     LOG_D("SW VERSION = %s", sw_version);
-    
+
     resp_len = (uint16_t)strlen(sw_version);
     memcpy(result->resp_data, sw_version, resp_len);
     result->resp_len = resp_len;
@@ -180,7 +183,7 @@ void cmd_handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_r
 
     hw_version = data_mgmt_get_hw_version();
     LOG_D("HW VERSION = %s", hw_version);
-    
+
     resp_len = (uint16_t)strlen(hw_version);
     memcpy(result->resp_data, hw_version, resp_len);
     result->resp_len = resp_len;
@@ -217,7 +220,7 @@ void cmd_handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_resu
 
     sn_number = data_mgmt_get_sn_number();
     LOG_D("SN NUMBER = %s", sn_number);
-    
+
     resp_len = (uint16_t)strlen(sn_number);
     memcpy(result->resp_data, sn_number, resp_len);
     result->resp_len = resp_len;
@@ -231,15 +234,15 @@ void cmd_handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_res
 {
     int ret;
     uint8_t control;
-    
+
     if (len != 1U) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
         return;
     }
-    
+
     control = payload[0];
-    
+
     if (control == 0U) {
         /* 停止脉冲输出 */
         ret = pulse_engine_stop();
@@ -262,7 +265,7 @@ void cmd_handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_res
     } else {
         result->ack_code = ACK_ERR_INVALID_PARAM;
     }
-    
+
     result->resp_len = 0;
 }
 
@@ -285,7 +288,7 @@ void cmd_handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len, cm
         result->resp_data[2] = (uint8_t)(report.count & 0xFFU);
         result->resp_data[3] = (uint8_t)((report.count >> 8) & 0xFFU);
         result->resp_len = 4U;
-        LOG_D("Get pulse status: mode=%d, status=%d, count=%d", 
+        LOG_D("Get pulse status: mode=%d, status=%d, count=%d",
               report.mode, report.status, report.count);
     } else {
         result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
@@ -306,17 +309,17 @@ void cmd_handle_set_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t l
         result->resp_len = 0;
         return;
     }
-    
+
     mode = (pulse_mode_t)payload[0];
-    
+
     ret = pulse_engine_set_mode(mode);
     if (ret == 0) {
         result->ack_code = ACK_OK;
         LOG_D("Set pulse mode: %d", mode);
     } else {
-        result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
+        result->ack_code = ACK_ERR_INVALID_PARAM;
     }
-    
+
     result->resp_len = 0;
 }
 
@@ -357,9 +360,9 @@ void cmd_handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len
         LOG_D("Invalid param length: %d, expected: %d", len, sizeof(pulse_params_t));
         return;
     }
-    
+
     memcpy(&params, payload, sizeof(pulse_params_t));
-    
+
     ret = pulse_engine_set_seq_param(&params);
     if (ret == 0) {
         result->ack_code = ACK_OK;
@@ -368,7 +371,7 @@ void cmd_handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len
         result->ack_code = ACK_ERR_INVALID_PARAM;
         LOG_D("Failed to set pulse param");
     }
-    
+
     result->resp_len = 0;
 }
 
@@ -410,19 +413,19 @@ void cmd_handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t
         LOG_D("Invalid ECG sync param length: %d, expected: %d", len, sizeof(ecg_sync_cfg_t));
         return;
     }
-    
+
     memcpy(&config, payload, sizeof(ecg_sync_cfg_t));
-    
+
     ret = pulse_engine_set_sync_param(&config);
     if (ret == 0) {
         result->ack_code = ACK_OK;
-        LOG_D("Set ECG sync: interval=%d, delay=%lu, stop=%lu, repeat=%d", 
+        LOG_D("Set ECG sync: interval=%d, delay=%lu, stop=%lu, repeat=%d",
               config.interval_R, config.trigger_delay_ms, config.stop_delay_ms, config.repeat_count);
     } else {
         result->ack_code = ACK_ERR_INVALID_PARAM;
         LOG_D("Failed to set ECG sync param");
     }
-    
+
     result->resp_len = 0;
 }
 
@@ -442,7 +445,7 @@ void cmd_handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t
         result->ack_code = ACK_OK;
         memcpy(result->resp_data, &config, sizeof(ecg_sync_cfg_t));
         result->resp_len = sizeof(ecg_sync_cfg_t);
-        LOG_D("Get ECG sync: interval=%d, delay=%lu, stop=%lu, repeat=%d", 
+        LOG_D("Get ECG sync: interval=%d, delay=%lu, stop=%lu, repeat=%d",
               config.interval_R, config.trigger_delay_ms, config.stop_delay_ms, config.repeat_count);
     } else {
         result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
@@ -462,15 +465,15 @@ static uint16_t voltage_to_dac_value(uint16_t voltage_mv)
     const uint16_t VREF_MV = 3300U;
     const uint16_t DAC_MAX = 4095U;
     uint32_t dac_value;
-    
+
     /* 计算：DAC值 = (电压 / VREF) * 4095 */
     dac_value = ((uint32_t)voltage_mv * DAC_MAX) / VREF_MV;
-    
+
     /* 限制在有效范围内 */
     if (dac_value > DAC_MAX) {
         dac_value = DAC_MAX;
     }
-    
+
     return (uint16_t)dac_value;
 }
 
@@ -484,10 +487,10 @@ static uint16_t dac_value_to_voltage(uint16_t dac_value)
     const uint16_t VREF_MV = 3300U;
     const uint16_t DAC_MAX = 4095U;
     uint32_t voltage_mv;
-    
+
     /* 计算：电压 = (DAC值 / 4095) * VREF */
     voltage_mv = ((uint32_t)dac_value * VREF_MV) / DAC_MAX;
-    
+
     return (uint16_t)voltage_mv;
 }
 
@@ -502,10 +505,10 @@ void cmd_handle_sys_reset(const uint8_t *payload, uint16_t len, cmd_result_t *re
 {
     (void)payload;
     (void)len;
-    
+
     result->ack_code = ACK_OK;
     result->resp_len = 0;
-    
+
     /* 延时后执行软件复位（由应用层协调） */
     major_logic_request_reset();
     LOG_D("System reset requested");
@@ -521,11 +524,11 @@ void cmd_handle_self_check(const uint8_t *payload, uint16_t len, cmd_result_t *r
 {
     (void)payload;
     (void)len;
-    
+
     /* 耗时命令先应答正在执行 */
     result->ack_code = ACK_IN_PROGERESS;
     result->resp_len = 0;
-    
+
     /* TODO: 在后台任务中执行自检，完成后发送ACK_OK */
     LOG_D("Self check started");
 }
@@ -540,10 +543,10 @@ void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_
 {
     (void)payload;
     (void)len;
-    
+
     result->ack_code = ACK_OK;
     result->resp_len = 0;
-    
+
     /* TODO: 实现低功耗模式控制 */
     LOG_D("Low power mode command received");
 }
@@ -558,11 +561,11 @@ void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
     (void)payload;
     (void)len;
-    
+
     /* 耗时命令先应答正在执行 */
     result->ack_code = ACK_IN_PROGERESS;
     result->resp_len = 0;
-    
+
     /* TODO: 在后台任务中执行IAP，完成后发送ACK_OK */
     LOG_D("IAP started");
 }
@@ -577,10 +580,10 @@ void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *
 {
     (void)payload;
     (void)len;
-    
+
     result->ack_code = ACK_OK;
     result->resp_len = 0;
-    
+
     /* TODO: 实现上传模式控制 */
     LOG_D("Upload mode command received");
 }
@@ -595,11 +598,11 @@ void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t
 {
     (void)payload;
     (void)len;
-    
+
     /* 状态上传是非应答型命令，不需要回复 */
     result->ack_code = ACK_OK;
     result->resp_len = 0;
-    
+
     LOG_D("Status upload received (no ACK required)");
 }
 
@@ -615,7 +618,7 @@ void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
     uint16_t voltage_mv;
     uint16_t dac_value;
     HAL_StatusTypeDef status;
-    
+
     /* 数据格式：[通道(1字节)] [电压值(2字节，小端)] */
     if (len != 3U) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
@@ -623,10 +626,10 @@ void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
         LOG_D("Invalid threshold param length: %d", len);
         return;
     }
-    
+
     channel = payload[0];
     voltage_mv = (uint16_t)(payload[1] | (payload[2] << 8));
-    
+
     /* 验证通道 */
     if (channel >= 2U) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
@@ -634,10 +637,10 @@ void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
         LOG_D("Invalid channel: %d", channel);
         return;
     }
-    
+
     /* 转换为DAC值 */
     dac_value = voltage_to_dac_value(voltage_mv);
-    
+
     /* 设置DAC */
     if (channel == 0U) {
         /* 通道1（ADC1）对应COMP3，COMP3负端使用DAC1 */
@@ -662,7 +665,7 @@ void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
             LOG_E("Failed to set DAC3: %d", status);
         }
     }
-    
+
     result->resp_len = 0;
 }
 
@@ -676,7 +679,7 @@ void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
 {
     uint8_t channel;
     uint16_t voltage_mv;
-    
+
     /* 数据格式：[通道(1字节)] */
     if (len != 1U) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
@@ -684,9 +687,9 @@ void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
         LOG_D("Invalid param length: %d", len);
         return;
     }
-    
+
     channel = payload[0];
-    
+
     /* 验证通道 */
     if (channel >= 2U) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
@@ -694,19 +697,19 @@ void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
         LOG_D("Invalid channel: %d", channel);
         return;
     }
-    
+
     /* 返回数据格式：[电压值(2字节，小端)] */
     if (channel == 0U) {
         voltage_mv = g_ocd_threshold_ch1;
     } else {
         voltage_mv = g_ocd_threshold_ch2;
     }
-    
+
     result->resp_data[0] = (uint8_t)(voltage_mv & 0xFFU);
     result->resp_data[1] = (uint8_t)((voltage_mv >> 8) & 0xFFU);
     result->ack_code = ACK_OK;
     result->resp_len = 2U;
-    
+
     LOG_D("Get CH%d threshold: %d mV", channel, voltage_mv);
 }
 

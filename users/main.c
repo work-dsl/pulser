@@ -85,10 +85,10 @@ int main(void)
     
     while(1)
     {
+        safety_task();          /* 安全任务 */
         stimer_service();       /* 软件定时器服务 */
         slave_proto_task();     /* 协议处理任务 */
         major_logic_task();     /* 主逻辑协调任务 */
-        safety_task();
     }
 }
 

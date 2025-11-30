@@ -38,13 +38,13 @@
 
 /* Private variables ---------------------------------------------------------*/
 
-static serial_t *port;                                 /**< 串口设备指针 */
-static proto_t g_slave_proto;                          /**< 协议解析器实例 */
+static serial_t *port;                                  /**< 串口设备指针 */
+static proto_t g_slave_proto;                           /**< 协议解析器实例 */
 static uint8_t g_slave_rx_buf[PROTO_CUSTOM_FRAME_MAX_LEN];  /**< 解析器内部组包用的临时buffer */
 static uint8_t g_slave_valid_fifo_buf[8U * PROTO_CUSTOM_FRAME_MAX_LEN];   /**< 有效数据队列缓冲区 */
-static kfifo_t g_slave_valid_fifo;                     /**< 有效数据输出队列 */
+static kfifo_t g_slave_valid_fifo;                      /**< 有效数据输出队列 */
 static volatile slave_state_t g_slave_state = SLAVE_STATE_WAIT_HANDSHAKE; /**< 从机当前状态 */
-static uint32_t g_last_handshake_tick = 0U;  /**< 上次发送握手请求的时间戳 */
+static uint32_t g_last_handshake_tick = 0U;             /**< 上次发送握手请求的时间戳 */
 
 /* Private function prototypes -----------------------------------------------*/
 static void slave_broadcast_handshake_request(void);
@@ -205,9 +205,6 @@ static void slave_proto_error_callback(void *inst, proto_err_t err)
  * @param frame 接收到的payload数据（已去除帧头、校验码、帧尾）
  * @param len payload长度
  * @details 解析帧内容，过滤产品地址和模块地址，并根据命令码分发处理
- * @note proto.c已经去除了帧头(0xFA)、校验码(CRC16)和帧尾(0x0D)，
- *       所以frame参数只包含：LEN(2) + DEV(1) + CMD(1) + MOD(1) + DATA(...)
- *       其中DEV为产品地址，MOD为模块地址，两者都必须匹配才会处理该帧
  */
 void slave_process_frame(const uint8_t *frame, uint16_t len)
 {
@@ -325,14 +322,8 @@ void slave_process_frame(const uint8_t *frame, uint16_t len)
         cmd_handle_status_upload(payload, payload_len, &result);
         /* 状态上传是非应答型命令，不需要回复 */
         break;
-    case CMD_SET_OCD_VOLTAGE_THRESHOLD:
-        cmd_handle_set_ocd_voltage_threshold(payload, payload_len, &result);
-        slave_send_response_frame(CMD_SET_OCD_VOLTAGE_THRESHOLD, &result);
-        break;
-    case CMD_GET_OCD_VOLTAGE_THRESHOLD:
-        cmd_handle_get_ocd_voltage_threshold(payload, payload_len, &result);
-        slave_send_response_frame(CMD_GET_OCD_VOLTAGE_THRESHOLD, &result);
-        break;
+    
+    /* 专有命令 */
     case CMD_CTRL_PULSE_ENGINE_START:
         cmd_handle_pulse_engine_start(payload, payload_len, &result);
         slave_send_response_frame(CMD_CTRL_PULSE_ENGINE_START, &result);
@@ -364,6 +355,14 @@ void slave_process_frame(const uint8_t *frame, uint16_t len)
     case CMD_GET_ECG_SYNC_TRIGGER_PARAMETERS:
         cmd_handle_get_ecg_sync_trigger_parameters(payload, payload_len, &result);
         slave_send_response_frame(CMD_GET_ECG_SYNC_TRIGGER_PARAMETERS, &result);
+        break;
+    case CMD_SET_OCD_VOLTAGE_THRESHOLD:
+        cmd_handle_set_ocd_voltage_threshold(payload, payload_len, &result);
+        slave_send_response_frame(CMD_SET_OCD_VOLTAGE_THRESHOLD, &result);
+        break;
+    case CMD_GET_OCD_VOLTAGE_THRESHOLD:
+        cmd_handle_get_ocd_voltage_threshold(payload, payload_len, &result);
+        slave_send_response_frame(CMD_GET_OCD_VOLTAGE_THRESHOLD, &result);
         break;
     default:
         /* 未知命令 */

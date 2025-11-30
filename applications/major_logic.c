@@ -76,7 +76,7 @@ static uint32_t get_tick(void)
 static void on_pulse_complete_handler(void)
 {
     LOG_D("Pulse sequence completed");
-    
+
     /* 通知命令处理服务上报状态 */
     cmd_handler_notify_pulse_complete();
 }
@@ -90,13 +90,13 @@ static void on_ocp_info_callback(const ocp_info_t *info)
     if (info == NULL) {
         return;
     }
-    
-    LOG_I("OCP detected: CH%d, peak=%d, pos=%d, time=%lu", 
+
+    LOG_I("OCP detected: CH%d, peak=%d, pos=%d, time=%lu",
           info->channel, info->peak_value, info->trigger_position, info->timestamp);
-    
+
     /* 停止脉冲输出 */
     pulse_engine_stop();
-    
+
     /* 上报过流信息给上位机 */
     slave_upload_ocp_info(info);
 }
@@ -108,10 +108,10 @@ static void on_ocp_info_callback(const ocp_info_t *info)
 static void on_ocp_event_handler(void)
 {
     LOG_I("Over-current detected! Stopping pulse engine...");
-    
+
     /* 停止脉冲输出 */
     pulse_engine_stop();
-    
+
     /* 主动上传过流状态信息 */
 }
 
@@ -125,21 +125,21 @@ void major_logic_init(void)
 {
     /* 初始化数据管理模块 */
     data_mgmt_init();
-    
+
     /* 初始化脉冲引擎 */
     pulse_engine_init();
-    
+
     /* 设置模块间的回调关系 */
     safety_set_ocp_callback(on_ocp_event_handler);
-    
+
     /* 设置电流监控模块的过流信息回调 */
     current_monitor_set_ocp_callback(on_ocp_info_callback);
-    
+
     /* 初始化状态 */
     g_reset_requested = 0U;
     g_reset_request_tick = 0U;
     g_last_pulse_status = PULSE_STATUS_IDLE;
-    
+
     LOG_D("Major logic initialized");
 }
 
@@ -151,7 +151,7 @@ void major_logic_task(void)
 {
     pulse_report_t report;
     uint32_t current_tick;
-    
+
     /* 处理系统复位请求 */
     if (g_reset_requested) {
         current_tick = get_tick();
@@ -160,22 +160,20 @@ void major_logic_task(void)
             safety_perform_software_reset();
         }
     }
-    
+
     /* 处理过流事件：查找峰值并上报 */
     current_monitor_process_ocp_event();
-    
+
     /* 检查脉冲引擎状态变化，自动上报 */
     if (pulse_engine_get_status(&report) == 0) {
-        /* 检测到完成状态 */
-        if (report.status == PULSE_STATUS_COMPLETED && 
-            g_last_pulse_status != PULSE_STATUS_COMPLETED) {
-            /* 状态变为完成，调用处理器 */
+        /* 检测状态从RUNNING变为IDLE，表示完成 */
+        if (report.status == PULSE_STATUS_IDLE &&
+            g_last_pulse_status == PULSE_STATUS_RUNNING) {
+            /* 状态从运行变为空闲，表示完成 */
             on_pulse_complete_handler();
-            g_last_pulse_status = PULSE_STATUS_COMPLETED;
-        } else if (report.status != PULSE_STATUS_COMPLETED) {
-            /* 更新状态 */
-            g_last_pulse_status = report.status;
         }
+        /* 更新状态 */
+        g_last_pulse_status = report.status;
     }
 }
 
