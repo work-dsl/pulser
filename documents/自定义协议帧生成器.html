@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自定义协议帧数据生成器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .section {
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .row {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .row .form-group {
+            flex: 1;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+        }
+        
+        .result-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            word-break: break-all;
+            margin-top: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .result-label {
+            color: #4ec9b0;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: block;
+        }
+        
+        .param-group {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .param-group-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .help-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+            font-style: italic;
+        }
+        
+        .frame-structure {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .copy-btn {
+            background: #28a745;
+            padding: 8px 15px;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 自定义协议帧数据生成器</h1>
+        <p class="subtitle">支持命令帧和应答帧生成 | 协议版本 V1.0</p>
+        
+        <div class="section">
+            <div class="section-title">📋 帧类型选择</div>
+            <div class="form-group">
+                <label>帧类型</label>
+                <select id="frameType">
+                    <option value="command">命令帧 (主机→从机)</option>
+                    <option value="response">应答帧 (从机→主机)</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">⚙️ 基本参数</div>
+            <div class="row">
+                <div class="form-group">
+                    <label>产品地址 (DEV)</label>
+                    <input type="number" id="devAddr" value="3" min="0" max="255" />
+                    <div class="help-text">默认: 0x03</div>
+                </div>
+                <div class="form-group">
+                    <label>模块地址 (MOD)</label>
+                    <input type="number" id="modAddr" value="2" min="0" max="255" />
+                    <div class="help-text">默认: 0x02</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">📨 命令选择</div>
+            <div class="form-group">
+                <label>命令码 (CMD)</label>
+                <select id="cmdCode">
+                    <option value="0x01">0x01 - 握手 (CMD_HAND_SHAKE)</option>
+                    <option value="0x02">0x02 - 查询软件版本 (CMD_GET_SOFTWARE_VERSION)</option>
+                    <option value="0x03">0x03 - 设置硬件版本 (CMD_SET_HARDWARE_VERSION)</option>
+                    <option value="0x04">0x04 - 查询硬件版本 (CMD_GET_HARDWARE_VERSION)</option>
+                    <option value="0x05">0x05 - 设置序列号 (CMD_SET_SERIAL_NUMBER)</option>
+                    <option value="0x06">0x06 - 查询序列号 (CMD_GET_SERIAL_NUMBER)</option>
+                    <option value="0x07">0x07 - 系统复位 (CMD_CTRL_SOFT_RESET)</option>
+                    <option value="0x08">0x08 - 系统自检 (CMD_CTRL_SELF_CHECK)</option>
+                    <option value="0x09">0x09 - 低功耗控制 (CMD_CTRL_LOW_POWER_MODE)</option>
+                    <option value="0x0A">0x0A - 启动在线升级 (CMD_CTRL_IAP)</option>
+                    <option value="0x0B">0x0B - 控制上传模式 (CMD_CTRL_UPLOAD_MODE)</option>
+                    <option value="0x0C">0x0C - 状态上传 (CMD_STATUS_UPLOAD)</option>
+                    <option value="0x2F">0x2F - 帧解析错误应答 (CMD_FRAME_PARSER_ERR_ACK)</option>
+                    <option value="0x30">0x30 - 控制脉冲序列输出 (CMD_CTRL_PULSE_ENGINE_START)</option>
+                    <option value="0x31">0x31 - 获取脉冲序列输出状态 (CMD_GET_PULSE_ENGINE_STATUS)</option>
+                    <option value="0x32">0x32 - 设置脉冲序列输出模式 (CMD_SET_PULSE_ENGINE_TRIGGER_MODE)</option>
+                    <option value="0x33">0x33 - 获取脉冲序列输出模式 (CMD_GET_PULSE_ENGINE_TRIGGER_MODE)</option>
+                    <option value="0x34">0x34 - 设置脉冲序列参数 (CMD_SET_PULSE_ENGINE_PARAMETERS)</option>
+                    <option value="0x35">0x35 - 获取脉冲序列参数 (CMD_GET_PULSE_ENGINE_PARAMETERS)</option>
+                    <option value="0x36">0x36 - 设置心电同步触发参数 (CMD_SET_ECG_SYNC_TRIGGER_PARAMETERS)</option>
+                    <option value="0x37">0x37 - 获取心电同步触发参数 (CMD_GET_ECG_SYNC_TRIGGER_PARAMETERS)</option>
+                    <option value="0x38">0x38 - 设置过流检测电压阈值 (CMD_SET_OCD_VOLTAGE_THRESHOLD)</option>
+                    <option value="0x39">0x39 - 获取过流检测电压阈值 (CMD_GET_OCD_VOLTAGE_THRESHOLD)</option>
+                    <option value="0x3A">0x3A - 脉冲序列输出完成状态上报 (CMD_PULSE_ENGINE_STATUS_UPLOAD)</option>
+                </select>
+            </div>
+            
+            <div id="responseAckGroup" class="form-group hidden">
+                <label>应答码 (ACK)</label>
+                <select id="ackCode">
+                    <option value="0x00">0x00 - ACK_OK (操作成功)</option>
+                    <option value="0x01">0x01 - ACK_ERR_UNKNOWN (未知错误)</option>
+                    <option value="0x02">0x02 - ACK_ERR_LEN_FIELD (长度字段超限)</option>
+                    <option value="0x03">0x03 - ACK_ERR_CHECKSUM (校验错误)</option>
+                    <option value="0x04">0x04 - ACK_ERR_TAIL (帧尾不匹配)</option>
+                    <option value="0x05">0x05 - ACK_ERR_BUF_TOO_SMALL (缓冲区过小)</option>
+                    <option value="0x06">0x06 - ACK_ERR_TIMEOUT (接收超时)</option>
+                    <option value="0x11">0x11 - ACK_ERR_PRODUCT_ADDR (产品地址错误)</option>
+                    <option value="0x12">0x12 - ACK_ERR_MODULE_ADDR (模块地址错误)</option>
+                    <option value="0x13">0x13 - ACK_ERR_INVALID_PARAM (数据参数无效)</option>
+                    <option value="0x14">0x14 - ACK_ERR_UNSUP_CMD (不支持的命令)</option>
+                    <option value="0x15">0x15 - ACK_ERR_BUSY (操作正忙)</option>
+                    <option value="0x16">0x16 - ACK_ERR_OPERATE_ABNORMAL (操作异常)</option>
+                    <option value="0x17">0x17 - ACK_ERR_MODE_ABNORMAL (模式异常)</option>
+                    <option value="0x18">0x18 - ACK_ERR_OPERATE_INVALID (操作无效)</option>
+                    <option value="0x19">0x19 - ACK_ERR_MODULE_LOCK (模块锁定)</option>
+                    <option value="0x20">0x20 - ACK_ERR_SYSTEM_LOCK (系统锁定)</option>
+                    <option value="0x80">0x80 - ACK_IN_PROGERESS (已接受，正在执行)</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="section" id="paramSection">
+            <div class="section-title">📝 命令参数</div>
+            <div id="paramContainer">
+                <div class="alert alert-info">
+                    选择命令后将显示对应的参数输入界面
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">🔧 操作</div>
+            <button class="btn" onclick="generateFrame()">生成帧数据</button>
+            <button class="btn btn-secondary" onclick="clearAll()">清空</button>
+        </div>
+        
+        <div class="section" id="resultSection" style="display: none;">
+            <div class="section-title">📊 生成结果</div>
+            <div class="result-label">十六进制格式:</div>
+            <div class="result-box" id="hexResult"></div>
+            <button class="btn copy-btn" onclick="copyToClipboard('hexResult')">复制十六进制</button>
+            
+            <div class="result-label" style="margin-top: 20px;">C语言数组格式:</div>
+            <div class="result-box" id="cArrayResult"></div>
+            <button class="btn copy-btn" onclick="copyToClipboard('cArrayResult')">复制C数组</button>
+            
+            <div class="result-label" style="margin-top: 20px;">帧结构解析:</div>
+            <div class="result-box" id="frameParseResult"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Modbus CRC16 查找表
+        const crc16_8005_table = [
+            0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
+            0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
+            0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
+            0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
+            0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
+            0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
+            0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
+            0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
+            0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
+            0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
+            0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
+            0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
+            0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
+            0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
+            0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
+            0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
+            0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
+            0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
+            0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
+            0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
+            0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
+            0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
+            0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
+            0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
+            0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
+            0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
+            0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
+            0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
+            0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
+            0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
+            0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
+            0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
+        ];
+        
+        // Modbus CRC16计算 (初始值0xFFFF, XOR输出0x0000)
+        function crc16_modbus(buffer) {
+            let crc = 0xFFFF;
+            for (let i = 0; i < buffer.length; i++) {
+                const index = (crc ^ buffer[i]) & 0xFF;
+                crc = (crc >>> 8) ^ crc16_8005_table[index];
+            }
+            return crc ^ 0x0000;
+        }
+        
+        // 将数字转换为小端序的2字节数组
+        function toLittleEndian16(value) {
+            return [value & 0xFF, (value >> 8) & 0xFF];
+        }
+        
+        // 将十六进制字符串转换为字节数组
+        function hexStringToBytes(hex) {
+            hex = hex.replace(/\s+/g, '');
+            const bytes = [];
+            for (let i = 0; i < hex.length; i += 2) {
+                bytes.push(parseInt(hex.substr(i, 2), 16));
+            }
+            return bytes;
+        }
+        
+        // 将字节数组转换为十六进制字符串
+        function bytesToHexString(bytes, separator = ' ') {
+            return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(separator);
+        }
+        
+        // 获取命令参数
+        function getCommandParams() {
+            const cmd = parseInt(document.getElementById('cmdCode').value);
+            const frameType = document.getElementById('frameType').value;
+            const params = [];
+            
+            switch(cmd) {
+                case 0x03: // 设置硬件版本
+                    const hwVersion = document.getElementById('hwVersion')?.value || '';
+                    if (hwVersion) {
+                        for (let i = 0; i < hwVersion.length; i++) {
+                            params.push(hwVersion.charCodeAt(i));
+                        }
+                    }
+                    break;
+                    
+                case 0x05: // 设置序列号
+                    const sn = document.getElementById('serialNumber')?.value || '';
+                    if (sn) {
+                        for (let i = 0; i < sn.length; i++) {
+                            params.push(sn.charCodeAt(i));
+                        }
+                    }
+                    break;
+                    
+                case 0x30: // 控制脉冲序列输出
+                    const control = parseInt(document.getElementById('pulseControl')?.value || '0');
+                    params.push(control);
+                    break;
+                    
+                case 0x32: // 设置脉冲序列输出模式
+                    const mode = parseInt(document.getElementById('pulseMode')?.value || '0');
+                    params.push(mode);
+                    break;
+                    
+                case 0x34: // 设置脉冲序列参数
+                    const pulseParams = {
+                        num_of_group: parseInt(document.getElementById('num_of_group')?.value || '1'),
+                        group_num: parseInt(document.getElementById('group_num')?.value || '1'),
+                        group_gap: parseInt(document.getElementById('group_gap')?.value || '100'),
+                        train_per_group: parseInt(document.getElementById('train_per_group')?.value || '10'),
+                        train_gap: parseInt(document.getElementById('train_gap')?.value || '5'),
+                        periods_per_train: parseInt(document.getElementById('periods_per_train')?.value || '20'),
+                        np_gap: parseInt(document.getElementById('np_gap')?.value || '1000'),
+                        pos_pw: parseInt(document.getElementById('pos_pw')?.value || '500'),
+                        pn_gap: parseInt(document.getElementById('pn_gap')?.value || '1000'),
+                        neg_pw: parseInt(document.getElementById('neg_pw')?.value || '500')
+                    };
+                    params.push(pulseParams.num_of_group);
+                    params.push(pulseParams.group_num);
+                    params.push(...toLittleEndian16(pulseParams.group_gap));
+                    params.push(...toLittleEndian16(pulseParams.train_per_group));
+                    params.push(...toLittleEndian16(pulseParams.train_gap));
+                    params.push(...toLittleEndian16(pulseParams.periods_per_train));
+                    params.push(...toLittleEndian16(pulseParams.np_gap));
+                    params.push(...toLittleEndian16(pulseParams.pos_pw));
+                    params.push(...toLittleEndian16(pulseParams.pn_gap));
+                    params.push(...toLittleEndian16(pulseParams.neg_pw));
+                    break;
+                    
+                case 0x36: // 设置心电同步触发参数
+                    const ecgParams = {
+                        trigger_delay_ms: parseInt(document.getElementById('trigger_delay_ms')?.value || '50'),
+                        stop_delay_ms: parseInt(document.getElementById('stop_delay_ms')?.value || '500'),
+                        interval_R: parseInt(document.getElementById('interval_R')?.value || '2'),
+                        repeat_count: parseInt(document.getElementById('repeat_count')?.value || '10')
+                    };
+                    params.push(...toLittleEndian16(ecgParams.trigger_delay_ms));
+                    params.push(...toLittleEndian16(ecgParams.stop_delay_ms));
+                    params.push(...toLittleEndian16(ecgParams.interval_R));
+                    params.push(...toLittleEndian16(ecgParams.repeat_count));
+                    break;
+                    
+                case 0x38: // 设置过流检测电压阈值
+                    const channel = parseInt(document.getElementById('ocdChannel')?.value || '0');
+                    const voltage = parseInt(document.getElementById('ocdVoltage')?.value || '1650');
+                    params.push(channel);
+                    params.push(...toLittleEndian16(voltage));
+                    break;
+                    
+                case 0x39: // 获取过流检测电压阈值
+                    const getChannel = parseInt(document.getElementById('ocdGetChannel')?.value || '0');
+                    params.push(getChannel);
+                    break;
+                    
+                case 0x0C: // 状态上传
+                case 0x3A: // 脉冲序列输出完成状态上报
+                    const customData = document.getElementById('customData')?.value || '';
+                    if (customData) {
+                        const bytes = hexStringToBytes(customData);
+                        params.push(...bytes);
+                    }
+                    break;
+            }
+            
+            return params;
+        }
+        
+        // 生成命令参数输入界面
+        function generateParamUI() {
+            const cmd = parseInt(document.getElementById('cmdCode').value);
+            const frameType = document.getElementById('frameType').value;
+            const container = document.getElementById('paramContainer');
+            container.innerHTML = '';
+            
+            if (frameType === 'response') {
+                // 应答帧可能需要响应数据
+                switch(cmd) {
+                    case 0x02: // 查询软件版本
+                    case 0x04: // 查询硬件版本
+                    case 0x06: // 查询序列号
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">响应数据 (字符串)</div>
+                                <input type="text" id="responseString" placeholder="例如: V1.0.0 或 HW_V1.0 或 SN12345678" />
+                            </div>
+                        `;
+                        break;
+                    case 0x31: // 获取脉冲序列输出状态
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">脉冲状态</div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>模式</label>
+                                        <select id="responsePulseMode">
+                                            <option value="0">0 - 正常模式</option>
+                                            <option value="1">1 - 心电同步触发模式</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>状态</label>
+                                        <select id="responsePulseStatus">
+                                            <option value="0">0 - 空闲</option>
+                                            <option value="1">1 - 运行中</option>
+                                            <option value="2">2 - 完成</option>
+                                            <option value="3">3 - 错误</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>次数</label>
+                                        <input type="number" id="responsePulseCount" value="0" min="0" max="65535" />
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        break;
+                    case 0x33: // 获取脉冲序列输出模式
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">脉冲模式</div>
+                                <select id="responsePulseModeOnly">
+                                    <option value="0">0 - 正常模式</option>
+                                    <option value="1">1 - 心电同步触发模式</option>
+                                </select>
+                            </div>
+                        `;
+                        break;
+                    case 0x35: // 获取脉冲序列参数
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">脉冲参数组数</div>
+                                <input type="number" id="responsePulseParamGroups" value="1" min="1" max="20" />
+                                <div class="help-text">将生成对应数量的参数组，每组20字节</div>
+                            </div>
+                            <div class="alert alert-info">
+                                提示：实际使用时，参数数据应从设备获取。这里可以手动输入十六进制数据。
+                            </div>
+                            <div class="param-group">
+                                <div class="param-group-title">参数数据 (十六进制，可选)</div>
+                                <textarea id="responsePulseParams" rows="3" placeholder="例如: 02 01 64 00 0A 00 05 00 14 00 E8 03 F4 01 E8 03 F4 01"></textarea>
+                                <div class="help-text">每20字节为一组参数，多组参数连续输入</div>
+                            </div>
+                        `;
+                        break;
+                    case 0x37: // 获取心电同步触发参数
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">心电同步参数</div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>触发延时 (ms)</label>
+                                        <input type="number" id="responseTriggerDelay" value="50" min="0" max="300" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>停止时间 (ms)</label>
+                                        <input type="number" id="responseStopDelay" value="500" min="200" max="2000" />
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>R波间隔个数</label>
+                                        <input type="number" id="responseIntervalR" value="2" min="0" max="30" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>重复次数</label>
+                                        <input type="number" id="responseRepeatCount" value="10" min="1" max="300" />
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        break;
+                    case 0x39: // 获取过流检测电压阈值
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">电压阈值</div>
+                                <input type="number" id="responseOcdVoltage" value="1650" min="0" max="3300" />
+                                <div class="help-text">单位: mV</div>
+                            </div>
+                        `;
+                        break;
+                    default:
+                        container.innerHTML = `
+                            <div class="alert alert-info">
+                                此命令无需额外参数，或使用自定义数据输入
+                            </div>
+                            <div class="param-group">
+                                <div class="param-group-title">自定义数据 (十六进制，可选)</div>
+                                <textarea id="customResponseData" rows="3" placeholder="例如: 01 02 03 04"></textarea>
+                            </div>
+                        `;
+                        break;
+                }
+            } else {
+                // 命令帧参数
+                switch(cmd) {
+                    case 0x03: // 设置硬件版本
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">硬件版本字符串</div>
+                                <input type="text" id="hwVersion" placeholder="例如: HW_V1.0" />
+                            </div>
+                        `;
+                        break;
+                    case 0x05: // 设置序列号
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">序列号字符串</div>
+                                <input type="text" id="serialNumber" placeholder="例如: SN12345678" />
+                            </div>
+                        `;
+                        break;
+                    case 0x30: // 控制脉冲序列输出
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">控制码</div>
+                                <select id="pulseControl">
+                                    <option value="0">0 - 停止脉冲输出</option>
+                                    <option value="1">1 - 启动脉冲输出</option>
+                                </select>
+                            </div>
+                        `;
+                        break;
+                    case 0x32: // 设置脉冲序列输出模式
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">脉冲模式</div>
+                                <select id="pulseMode">
+                                    <option value="0">0 - 正常模式</option>
+                                    <option value="1">1 - 心电同步触发模式</option>
+                                </select>
+                            </div>
+                        `;
+                        break;
+                    case 0x34: // 设置脉冲序列参数
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">脉冲序列参数 (20字节)</div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>群个数</label>
+                                        <input type="number" id="num_of_group" value="1" min="1" max="20" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>群编号</label>
+                                        <input type="number" id="group_num" value="1" min="1" max="20" />
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>群间隙 (ms)</label>
+                                        <input type="number" id="group_gap" value="100" min="50" max="10000" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>每群脉冲串数量</label>
+                                        <input type="number" id="train_per_group" value="10" min="1" max="300" />
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>脉冲串间隙 (ms)</label>
+                                        <input type="number" id="train_gap" value="5" min="1" max="100" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>每串脉冲周期数</label>
+                                        <input type="number" id="periods_per_train" value="20" min="1" max="300" />
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>负-正脉冲间隙 (ns)</label>
+                                        <input type="number" id="np_gap" value="1000" min="0" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>正脉宽 (ns)</label>
+                                        <input type="number" id="pos_pw" value="500" min="0" />
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>正-负脉冲间隙 (ns)</label>
+                                        <input type="number" id="pn_gap" value="1000" min="0" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>负脉宽 (ns)</label>
+                                        <input type="number" id="neg_pw" value="500" min="0" />
+                                        <div class="help-text">0表示单极性</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        break;
+                    case 0x36: // 设置心电同步触发参数
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">心电同步触发参数 (8字节)</div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>触发输出延时 (ms)</label>
+                                        <input type="number" id="trigger_delay_ms" value="50" min="0" max="300" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>停止时间 (ms)</label>
+                                        <input type="number" id="stop_delay_ms" value="500" min="200" max="2000" />
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>R波间隔个数</label>
+                                        <input type="number" id="interval_R" value="2" min="0" max="30" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>连续触发次数</label>
+                                        <input type="number" id="repeat_count" value="10" min="1" max="300" />
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        break;
+                    case 0x38: // 设置过流检测电压阈值
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">过流检测电压阈值 (3字节)</div>
+                                <div class="row">
+                                    <div class="form-group">
+                                        <label>通道</label>
+                                        <select id="ocdChannel">
+                                            <option value="0">0 - 通道1 (ADC1/COMP3, DAC1)</option>
+                                            <option value="1">1 - 通道2 (ADC2/COMP1, DAC3)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>电压阈值 (mV)</label>
+                                        <input type="number" id="ocdVoltage" value="1650" min="0" max="3300" />
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        break;
+                    case 0x39: // 获取过流检测电压阈值
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">通道选择</div>
+                                <select id="ocdGetChannel">
+                                    <option value="0">0 - 通道1</option>
+                                    <option value="1">1 - 通道2</option>
+                                </select>
+                            </div>
+                        `;
+                        break;
+                    case 0x0C: // 状态上传
+                    case 0x3A: // 脉冲序列输出完成状态上报
+                        container.innerHTML = `
+                            <div class="param-group">
+                                <div class="param-group-title">自定义数据 (十六进制)</div>
+                                <textarea id="customData" rows="3" placeholder="例如: 01 02 03 04 或 4E 6F 72 6D 61 6C 7C 4F 4B 7C 05 00"></textarea>
+                                <div class="help-text">输入十六进制数据，用空格分隔</div>
+                            </div>
+                        `;
+                        break;
+                    default:
+                        container.innerHTML = `
+                            <div class="alert alert-info">
+                                此命令无需参数
+                            </div>
+                        `;
+                        break;
+                }
+            }
+        }
+        
+        // 获取应答帧的响应数据
+        function getResponseData() {
+            const cmd = parseInt(document.getElementById('cmdCode').value);
+            const params = [];
+            
+            switch(cmd) {
+                case 0x02: // 查询软件版本
+                case 0x04: // 查询硬件版本
+                case 0x06: // 查询序列号
+                    const responseString = document.getElementById('responseString')?.value || '';
+                    if (responseString) {
+                        for (let i = 0; i < responseString.length; i++) {
+                            params.push(responseString.charCodeAt(i));
+                        }
+                    }
+                    break;
+                    
+                case 0x31: // 获取脉冲序列输出状态
+                    const mode = parseInt(document.getElementById('responsePulseMode')?.value || '0');
+                    const status = parseInt(document.getElementById('responsePulseStatus')?.value || '0');
+                    const count = parseInt(document.getElementById('responsePulseCount')?.value || '0');
+                    params.push(mode);
+                    params.push(status);
+                    params.push(...toLittleEndian16(count));
+                    break;
+                    
+                case 0x33: // 获取脉冲序列输出模式
+                    const modeOnly = parseInt(document.getElementById('responsePulseModeOnly')?.value || '0');
+                    params.push(modeOnly);
+                    break;
+                    
+                case 0x35: // 获取脉冲序列参数
+                    const customParams = document.getElementById('responsePulseParams')?.value || '';
+                    if (customParams) {
+                        const bytes = hexStringToBytes(customParams);
+                        params.push(...bytes);
+                    } else {
+                        // 生成默认参数组
+                        const groups = parseInt(document.getElementById('responsePulseParamGroups')?.value || '1');
+                        for (let g = 0; g < groups; g++) {
+                            // 默认参数：群个数=1, 群编号=1, 其他默认值
+                            params.push(1); // num_of_group
+                            params.push(1); // group_num
+                            params.push(...toLittleEndian16(100)); // group_gap
+                            params.push(...toLittleEndian16(10)); // train_per_group
+                            params.push(...toLittleEndian16(5)); // train_gap
+                            params.push(...toLittleEndian16(20)); // periods_per_train
+                            params.push(...toLittleEndian16(1000)); // np_gap
+                            params.push(...toLittleEndian16(500)); // pos_pw
+                            params.push(...toLittleEndian16(1000)); // pn_gap
+                            params.push(...toLittleEndian16(500)); // neg_pw
+                        }
+                    }
+                    break;
+                    
+                case 0x37: // 获取心电同步触发参数
+                    const triggerDelay = parseInt(document.getElementById('responseTriggerDelay')?.value || '50');
+                    const stopDelay = parseInt(document.getElementById('responseStopDelay')?.value || '500');
+                    const intervalR = parseInt(document.getElementById('responseIntervalR')?.value || '2');
+                    const repeatCount = parseInt(document.getElementById('responseRepeatCount')?.value || '10');
+                    params.push(...toLittleEndian16(triggerDelay));
+                    params.push(...toLittleEndian16(stopDelay));
+                    params.push(...toLittleEndian16(intervalR));
+                    params.push(...toLittleEndian16(repeatCount));
+                    break;
+                    
+                case 0x39: // 获取过流检测电压阈值
+                    const voltage = parseInt(document.getElementById('responseOcdVoltage')?.value || '1650');
+                    params.push(...toLittleEndian16(voltage));
+                    break;
+                    
+                default:
+                    const customResponseData = document.getElementById('customResponseData')?.value || '';
+                    if (customResponseData) {
+                        const bytes = hexStringToBytes(customResponseData);
+                        params.push(...bytes);
+                    }
+                    break;
+            }
+            
+            return params;
+        }
+        
+        // 生成帧数据
+        function generateFrame() {
+            try {
+                const frameType = document.getElementById('frameType').value;
+                const dev = parseInt(document.getElementById('devAddr').value);
+                const mod = parseInt(document.getElementById('modAddr').value);
+                const cmd = parseInt(document.getElementById('cmdCode').value);
+                
+                const frame = [];
+                
+                // 帧头
+                frame.push(0xFA);
+                
+                // 先构建payload部分（不含长度和CRC）
+                const payload = [];
+                payload.push(dev);
+                payload.push(cmd);
+                payload.push(mod);
+                
+                let dataParams = [];
+                
+                if (frameType === 'response') {
+                    // 应答帧：添加应答码
+                    const ack = parseInt(document.getElementById('ackCode').value);
+                    payload.push(ack);
+                    // 获取响应数据
+                    dataParams = getResponseData();
+                } else {
+                    // 命令帧：获取命令参数
+                    dataParams = getCommandParams();
+                }
+                
+                // 添加数据载荷
+                payload.push(...dataParams);
+                
+                // 计算总长度（帧头 + 长度字段 + payload + CRC + 帧尾）
+                const totalLen = 1 + 2 + payload.length + 2 + 1;
+                
+                // 检查长度限制
+                if (totalLen > 64) {
+                    alert('错误：帧长度超过64字节限制！当前长度：' + totalLen);
+                    return;
+                }
+                
+                // 添加长度字段（小端）
+                frame.push(...toLittleEndian16(totalLen));
+                
+                // 添加payload
+                frame.push(...payload);
+                
+                // 计算CRC16（从长度字段开始到数据载荷结束）
+                const crcData = frame.slice(1); // 从长度字段开始
+                const crc = crc16_modbus(crcData);
+                
+                // 添加CRC16（小端）
+                frame.push(...toLittleEndian16(crc));
+                
+                // 帧尾
+                frame.push(0x0D);
+                
+                // 显示结果
+                displayResult(frame, payload, dataParams, frameType, cmd);
+                
+            } catch (error) {
+                alert('生成帧数据时出错：' + error.message);
+                console.error(error);
+            }
+        }
+        
+        // 显示生成结果
+        function displayResult(frame, payload, dataParams, frameType, cmd) {
+            const resultSection = document.getElementById('resultSection');
+            resultSection.style.display = 'block';
+            
+            // 十六进制格式
+            const hexResult = document.getElementById('hexResult');
+            hexResult.textContent = bytesToHexString(frame, ' ');
+            
+            // C语言数组格式
+            const cArrayResult = document.getElementById('cArrayResult');
+            const cArray = 'uint8_t frame[] = {' + frame.map(b => '0x' + b.toString(16).padStart(2, '0').toUpperCase()).join(', ') + '};';
+            cArrayResult.textContent = cArray;
+            
+            // 帧结构解析
+            const frameParseResult = document.getElementById('frameParseResult');
+            let parseText = '帧结构解析：\n';
+            parseText += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+            parseText += `帧类型: ${frameType === 'command' ? '命令帧' : '应答帧'}\n`;
+            parseText += `总长度: ${frame.length} 字节\n`;
+            parseText += `\n字节分解：\n`;
+            parseText += `[0]     帧头: 0x${frame[0].toString(16).padStart(2, '0').toUpperCase()}\n`;
+            parseText += `[1-2]   长度: 0x${frame[1].toString(16).padStart(2, '0').toUpperCase()} 0x${frame[2].toString(16).padStart(2, '0').toUpperCase()} (${frame[1] | (frame[2] << 8)} 字节)\n`;
+            parseText += `[3]     设备地址: 0x${frame[3].toString(16).padStart(2, '0').toUpperCase()}\n`;
+            parseText += `[4]     命令码: 0x${frame[4].toString(16).padStart(2, '0').toUpperCase()}\n`;
+            parseText += `[5]     模块地址: 0x${frame[5].toString(16).padStart(2, '0').toUpperCase()}\n`;
+            
+            if (frameType === 'response') {
+                parseText += `[6]     应答码: 0x${frame[6].toString(16).padStart(2, '0').toUpperCase()}\n`;
+                if (dataParams.length > 0) {
+                    parseText += `[7-${6 + dataParams.length}] 数据载荷: ${bytesToHexString(dataParams, ' ')}\n`;
+                    parseText += `        (${dataParams.length} 字节)\n`;
+                }
+                const crcStart = 7 + dataParams.length;
+                parseText += `[${crcStart}-${crcStart + 1}] CRC16: 0x${frame[crcStart].toString(16).padStart(2, '0').toUpperCase()} 0x${frame[crcStart + 1].toString(16).padStart(2, '0').toUpperCase()}\n`;
+                parseText += `[${crcStart + 2}] 帧尾: 0x${frame[crcStart + 2].toString(16).padStart(2, '0').toUpperCase()}\n`;
+            } else {
+                if (dataParams.length > 0) {
+                    parseText += `[6-${5 + dataParams.length}] 数据载荷: ${bytesToHexString(dataParams, ' ')}\n`;
+                    parseText += `        (${dataParams.length} 字节)\n`;
+                }
+                const crcStart = 6 + dataParams.length;
+                parseText += `[${crcStart}-${crcStart + 1}] CRC16: 0x${frame[crcStart].toString(16).padStart(2, '0').toUpperCase()} 0x${frame[crcStart + 1].toString(16).padStart(2, '0').toUpperCase()}\n`;
+                parseText += `[${crcStart + 2}] 帧尾: 0x${frame[crcStart + 2].toString(16).padStart(2, '0').toUpperCase()}\n`;
+            }
+            
+            frameParseResult.textContent = parseText;
+            
+            // 滚动到结果区域
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        
+        // 复制到剪贴板
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.textContent;
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('已复制到剪贴板！');
+                }).catch(err => {
+                    console.error('复制失败：', err);
+                    fallbackCopyToClipboard(text);
+                });
+            } else {
+                fallbackCopyToClipboard(text);
+            }
+        }
+        
+        // 备用复制方法
+        function fallbackCopyToClipboard(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                alert('已复制到剪贴板！');
+            } catch (err) {
+                alert('复制失败，请手动复制');
+            }
+            document.body.removeChild(textArea);
+        }
+        
+        // 清空所有
+        function clearAll() {
+            document.getElementById('devAddr').value = '3';
+            document.getElementById('modAddr').value = '2';
+            document.getElementById('cmdCode').selectedIndex = 0;
+            document.getElementById('ackCode').selectedIndex = 0;
+            document.getElementById('frameType').selectedIndex = 0;
+            document.getElementById('paramContainer').innerHTML = '<div class="alert alert-info">选择命令后将显示对应的参数输入界面</div>';
+            document.getElementById('resultSection').style.display = 'none';
+            generateParamUI();
+        }
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 监听帧类型变化
+            document.getElementById('frameType').addEventListener('change', function() {
+                generateParamUI();
+                const responseAckGroup = document.getElementById('responseAckGroup');
+                if (this.value === 'response') {
+                    responseAckGroup.classList.remove('hidden');
+                } else {
+                    responseAckGroup.classList.add('hidden');
+                }
+            });
+            
+            // 监听命令码变化
+            document.getElementById('cmdCode').addEventListener('change', generateParamUI);
+            
+            // 初始化参数界面
+            generateParamUI();
+        });
+    </script>
+</body>
+</html>

@@ -36,3 +36,6 @@ JLinkSettings.ini
 *.base@*
 *.icf
 *.html
+
+# 【重要】添加例外：不忽略这个特定的文件
+!自定义协议帧生成器.html
