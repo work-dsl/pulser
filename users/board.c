@@ -5,7 +5,7 @@
   * @author      : ZJY
   * @version     : V1.0
   * @data        : 20xx-xx-xx
-  * @brief       : 
+  * @brief       :
   * @attention   : None
   ******************************************************************************
   * @history     :
@@ -19,7 +19,7 @@
 
 #include "bsp_conf.h"
 #include "bsp_gpio.h"
-#include "bsp_hrtim.h"  
+#include "bsp_hrtim.h"
 #include "bsp_dma.h"
 #include "bsp_sram.h"
 #include "bsp_usart.h"
@@ -28,6 +28,7 @@
 #include "bsp_comp.h"
 #include "bsp_dac.h"
 #include "bsp_iwdg.h"
+#include "bsp_dwt.h"
 
 #include "SEGGER_RTT.h"
 #include "log.h"
@@ -49,10 +50,10 @@ static void rtt_output_handler(const char *msg, size_t len);
 
 /* Exported functions --------------------------------------------------------*/
 /**
-  * @brief  
-  * @param  
-  * @retval 
-  * @note   
+  * @brief
+  * @param
+  * @retval
+  * @note
   */
 void board_init(void)
 {
@@ -61,57 +62,33 @@ void board_init(void)
     SEGGER_RTT_ConfigUpBuffer(0, "RTTUP", NULL, 0, SEGGER_RTT_MODE_NO_BLOCK_SKIP);
     log_register_handler("rtt", rtt_output_handler);
     log_enable_handler("rtt");
-    
+
     DBGMCU->APB1FZR1 |= DBGMCU_APB1FZR1_DBG_WWDG_STOP;
-    
+
     /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
     HAL_Init();
-    
+
     /* Configure the system clock */
     SystemClock_Config();
-    
+
     /* 检查复位源 */
-    if (__HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST))
-    {
+    if (__HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST)) {
         LOG_D("System reset by Software");
     }
-    
-    if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST))
-    {
+    if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST)) {
         LOG_D("System reset by IWDG timeout");
     }
-    
-    /* 清除复位标志 */
-    __HAL_RCC_CLEAR_RESET_FLAGS();
+    __HAL_RCC_CLEAR_RESET_FLAGS();  /* 清除复位标志 */
 
     /* Initialize all configured peripherals */
+    __HAL_RCC_DMAMUX1_CLK_ENABLE();
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    
+    bsp_dwt_init();
     bsp_gpio_init();
     bsp_iwdg_init();
     bsp_sram_init();
     bsp_uart_init();
-    bsp_hrtim_init();
-    MX_TIM6_Init();
-    MX_TIM4_Init();
-    MX_TIM7_Init();
-    MX_TIM15_Init();
-    
-    __HAL_RCC_DMAMUX1_CLK_ENABLE();
-    __HAL_RCC_DMA1_CLK_ENABLE();
-    
-    HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
-    /* DMA1_Channel2_IRQn interrupt configuration */
-    HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
-    
-    bsp_adc1_init();
-    bsp_adc2_init();
-    
-    MX_DAC1_Init();
-    MX_DAC3_Init(); 
-    
-    MX_COMP1_Init();
-    MX_COMP3_Init();
 }
 
 /**
@@ -171,12 +148,12 @@ void HAL_MspInit(void)
 #else
     __HAL_RCC_SYSCFG_CLK_ENABLE();
 #endif
-    
+
     __HAL_RCC_PWR_CLK_ENABLE();
-    
+
     /* 配置NVIC优先级分组 */
     HAL_NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_4);
-    
+
     /** Disable the internal Pull-Up in Dead Battery pins of UCPD peripheral
     */
     HAL_PWREx_DisableUCPDDeadBattery();
@@ -192,7 +169,7 @@ void Error_Handler(void)
     __disable_irq();
     while (1)
     {
-        
+
     }
 }
 

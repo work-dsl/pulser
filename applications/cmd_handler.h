@@ -49,17 +49,18 @@ typedef void (*cmd_response_cb_t)(uint8_t cmd, const cmd_result_t *result);
 
 void cmd_handler_set_response_callback(cmd_response_cb_t cb);
 void cmd_handler_notify_pulse_complete(void);
-void cmd_handle_sys_reset(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_self_check(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
-void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+
 void cmd_handle_get_software_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_hardware_version(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_soft_reset(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_self_check(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 
 void cmd_handle_pulse_engine_start(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_pulse_engine_status(const uint8_t *payload, uint16_t len, cmd_result_t *result);
@@ -71,6 +72,8 @@ void cmd_handle_set_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t
 void cmd_handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_get_ocp_pin_status(const uint8_t *payload, uint16_t len, cmd_result_t *result);
+void cmd_handle_reset_ocp_hardware(const uint8_t *payload, uint16_t len, cmd_result_t *result);
 
 #ifdef __cplusplus
 }

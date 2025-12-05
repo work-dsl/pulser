@@ -141,7 +141,7 @@ typedef struct {
 
 /*------------------------------ function declarations -----------------------*/
 
-void pulse_engine_init(void);
+int32_t pulse_engine_init(void);
 int32_t pulse_engine_set_mode(pulse_mode_t mode);
 int32_t pulse_engine_get_mode(pulse_mode_t* mode);
 int32_t pulse_engine_set_seq_param(const pulse_params_t* p);
@@ -152,6 +152,8 @@ int32_t pulse_engine_start(void);
 int32_t pulse_engine_stop(void);
 int32_t pulse_engine_get_status(pulse_report_t* report);
 void pulse_engine_notify_output_complete(void);
+void pulse_engine_set_lock(uint8_t locked);
+uint8_t pulse_engine_get_lock(void);
 
 #ifdef __cplusplus
 }

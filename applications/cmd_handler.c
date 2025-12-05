@@ -12,9 +12,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "cmd_handler.h"
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
 #include "proto_custom.h"
 #include "custom_slave.h"
 #include "data_mgmt.h"
@@ -22,6 +19,14 @@
 #include "major_logic.h"
 #include "bsp_dac.h"
 #include "stm32g4xx_hal.h"
+#include "ocd.h"
+#include "errno-base.h"
+#include "board.h"
+#include "gpio.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #define  LOG_TAG             "cmd_handler"
 #define  LOG_LVL             4
@@ -46,16 +51,8 @@ static cmd_response_cb_t g_response_callback = NULL;
 static volatile pulse_status_t g_last_pulse_status = PULSE_STATUS_IDLE;
 
 
-/**
- * @brief 过流阈值存储（单位：mV）
- */
-static uint16_t g_ocd_threshold_ch1 = 0U;  /**< 通道1阈值 */
-static uint16_t g_ocd_threshold_ch2 = 0U;  /**< 通道2阈值 */
 
 /* Private function prototypes -----------------------------------------------*/
-/* 这些函数已改为导出函数，声明在 cmd_handler.h 中 */
-static uint16_t voltage_to_dac_value(uint16_t voltage_mv);
-static uint16_t dac_value_to_voltage(uint16_t dac_value);
 
 /* Exported variables  -------------------------------------------------------*/
 
@@ -130,8 +127,6 @@ void cmd_handler_notify_pulse_complete(void)
 
     LOG_D("Upload pulse status: %s|%s|%d", mode_str, status_str, report.count);
 }
-
-/* Private functions ---------------------------------------------------------*/
 
 /**
  * @brief 处理获取软件版本命令
@@ -225,6 +220,117 @@ void cmd_handle_get_serial_number(const uint8_t *payload, uint16_t len, cmd_resu
     memcpy(result->resp_data, sn_number, resp_len);
     result->resp_len = resp_len;
     result->ack_code = ACK_OK;
+}
+
+/**
+ * @brief 处理系统复位命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_soft_reset(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+
+    /* 延时后执行软件复位（由应用层协调） */
+    major_logic_request_reset();
+    LOG_D("System reset requested");
+}
+
+/**
+ * @brief 处理系统自检命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_self_check(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+
+    /* 耗时命令先应答正在执行 */
+    result->ack_code = ACK_IN_PROGERESS;
+    result->resp_len = 0;
+
+    /* TODO: 在后台任务中执行自检，完成后发送ACK_OK */
+    LOG_D("Self check started");
+}
+
+/**
+ * @brief 处理低功耗模式命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+
+    /* TODO: 实现低功耗模式控制 */
+    LOG_D("Low power mode command received");
+}
+
+/**
+ * @brief 处理在线升级命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+
+    /* 耗时命令先应答正在执行 */
+    result->ack_code = ACK_IN_PROGERESS;
+    result->resp_len = 0;
+
+    /* TODO: 在后台任务中执行IAP，完成后发送ACK_OK */
+    LOG_D("IAP started");
+}
+
+/**
+ * @brief 处理上传模式命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+
+    /* TODO: 实现上传模式控制 */
+    LOG_D("Upload mode command received");
+}
+
+/**
+ * @brief 处理状态上传命令
+ * @param payload 数据载荷（未使用）
+ * @param len 数据载荷长度（未使用）
+ * @param result 命令处理结果
+ */
+void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    (void)payload;
+    (void)len;
+
+    /* 状态上传是非应答型命令，不需要回复 */
+    result->ack_code = ACK_OK;
+    result->resp_len = 0;
+
+    LOG_D("Status upload received (no ACK required)");
 }
 
 /**
@@ -456,159 +562,6 @@ void cmd_handle_get_ecg_sync_trigger_parameters(const uint8_t *payload, uint16_t
 }
 
 /**
- * @brief 电压转DAC值
- * @param voltage_mv 电压值（毫伏）
- * @return DAC寄存器值（12位，0-4095）
- * @note 假设VREF = 3.3V = 3300mV
- */
-static uint16_t voltage_to_dac_value(uint16_t voltage_mv)
-{
-    /* DAC参考电压：3.3V = 3300mV */
-    const uint16_t VREF_MV = 3300U;
-    const uint16_t DAC_MAX = 4095U;
-    uint32_t dac_value;
-
-    /* 计算：DAC值 = (电压 / VREF) * 4095 */
-    dac_value = ((uint32_t)voltage_mv * DAC_MAX) / VREF_MV;
-
-    /* 限制在有效范围内 */
-    if (dac_value > DAC_MAX) {
-        dac_value = DAC_MAX;
-    }
-
-    return (uint16_t)dac_value;
-}
-
-/**
- * @brief DAC值转电压
- * @param dac_value DAC寄存器值（12位）
- * @return 电压值（毫伏）
- */
-static uint16_t dac_value_to_voltage(uint16_t dac_value)
-{
-    const uint16_t VREF_MV = 3300U;
-    const uint16_t DAC_MAX = 4095U;
-    uint32_t voltage_mv;
-
-    /* 计算：电压 = (DAC值 / 4095) * VREF */
-    voltage_mv = ((uint32_t)dac_value * VREF_MV) / DAC_MAX;
-
-    return (uint16_t)voltage_mv;
-}
-
-
-/**
- * @brief 处理系统复位命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @param result 命令处理结果
- */
-void cmd_handle_sys_reset(const uint8_t *payload, uint16_t len, cmd_result_t *result)
-{
-    (void)payload;
-    (void)len;
-
-    result->ack_code = ACK_OK;
-    result->resp_len = 0;
-
-    /* 延时后执行软件复位（由应用层协调） */
-    major_logic_request_reset();
-    LOG_D("System reset requested");
-}
-
-/**
- * @brief 处理系统自检命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @param result 命令处理结果
- */
-void cmd_handle_self_check(const uint8_t *payload, uint16_t len, cmd_result_t *result)
-{
-    (void)payload;
-    (void)len;
-
-    /* 耗时命令先应答正在执行 */
-    result->ack_code = ACK_IN_PROGERESS;
-    result->resp_len = 0;
-
-    /* TODO: 在后台任务中执行自检，完成后发送ACK_OK */
-    LOG_D("Self check started");
-}
-
-/**
- * @brief 处理低功耗模式命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @param result 命令处理结果
- */
-void cmd_handle_low_power_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
-{
-    (void)payload;
-    (void)len;
-
-    result->ack_code = ACK_OK;
-    result->resp_len = 0;
-
-    /* TODO: 实现低功耗模式控制 */
-    LOG_D("Low power mode command received");
-}
-
-/**
- * @brief 处理在线升级命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @param result 命令处理结果
- */
-void cmd_handle_iap(const uint8_t *payload, uint16_t len, cmd_result_t *result)
-{
-    (void)payload;
-    (void)len;
-
-    /* 耗时命令先应答正在执行 */
-    result->ack_code = ACK_IN_PROGERESS;
-    result->resp_len = 0;
-
-    /* TODO: 在后台任务中执行IAP，完成后发送ACK_OK */
-    LOG_D("IAP started");
-}
-
-/**
- * @brief 处理上传模式命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @param result 命令处理结果
- */
-void cmd_handle_upload_mode(const uint8_t *payload, uint16_t len, cmd_result_t *result)
-{
-    (void)payload;
-    (void)len;
-
-    result->ack_code = ACK_OK;
-    result->resp_len = 0;
-
-    /* TODO: 实现上传模式控制 */
-    LOG_D("Upload mode command received");
-}
-
-/**
- * @brief 处理状态上传命令
- * @param payload 数据载荷（未使用）
- * @param len 数据载荷长度（未使用）
- * @param result 命令处理结果
- */
-void cmd_handle_status_upload(const uint8_t *payload, uint16_t len, cmd_result_t *result)
-{
-    (void)payload;
-    (void)len;
-
-    /* 状态上传是非应答型命令，不需要回复 */
-    result->ack_code = ACK_OK;
-    result->resp_len = 0;
-
-    LOG_D("Status upload received (no ACK required)");
-}
-
-/**
  * @brief 处理设置过流检测电压阈值命令
  * @param payload 数据载荷
  * @param len 数据载荷长度
@@ -618,8 +571,7 @@ void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
 {
     uint8_t channel;
     uint16_t voltage_mv;
-    uint16_t dac_value;
-    HAL_StatusTypeDef status;
+    int ret;
 
     /* 数据格式：[通道(1字节)] [电压值(2字节，小端)] */
     if (len != 3U) {
@@ -640,32 +592,12 @@ void cmd_handle_set_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
         return;
     }
 
-    /* 转换为DAC值 */
-    dac_value = voltage_to_dac_value(voltage_mv);
-
-    /* 设置DAC */
-    if (channel == 0U) {
-        /* 通道1（ADC1）对应COMP3，COMP3负端使用DAC1 */
-        status = HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-        if (status == HAL_OK) {
-            g_ocd_threshold_ch1 = voltage_mv;
-            result->ack_code = ACK_OK;
-            LOG_D("Set CH1 (ADC1/COMP3) threshold: %d mV (DAC1=%d)", voltage_mv, dac_value);
-        } else {
-            result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
-            LOG_E("Failed to set DAC1: %d", status);
-        }
+    /* 调用OCD模块设置阈值 */
+    ret = ocd_set_threshold((ocd_ch_t)channel, voltage_mv);
+    if (ret == 0) {
+        result->ack_code = ACK_OK;
     } else {
-        /* 通道2（ADC2）对应COMP1，COMP1负端使用DAC3 */
-        status = HAL_DAC_SetValue(&hdac3, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-        if (status == HAL_OK) {
-            g_ocd_threshold_ch2 = voltage_mv;
-            result->ack_code = ACK_OK;
-            LOG_D("Set CH2 (ADC2/COMP1) threshold: %d mV (DAC3=%d)", voltage_mv, dac_value);
-        } else {
-            result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
-            LOG_E("Failed to set DAC3: %d", status);
-        }
+        result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
     }
 
     result->resp_len = 0;
@@ -681,6 +613,7 @@ void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
 {
     uint8_t channel;
     uint16_t voltage_mv;
+    int ret;
 
     /* 数据格式：[通道(1字节)] */
     if (len != 1U) {
@@ -700,18 +633,100 @@ void cmd_handle_get_ocd_voltage_threshold(const uint8_t *payload, uint16_t len, 
         return;
     }
 
-    /* 返回数据格式：[电压值(2字节，小端)] */
-    if (channel == 0U) {
-        voltage_mv = g_ocd_threshold_ch1;
+    /* 调用OCD模块获取阈值 */
+    ret = ocd_get_threshold((ocd_ch_t)channel, &voltage_mv);
+    if (ret == 0) {
+        /* 返回数据格式：[电压值(2字节，小端)] */
+        result->resp_data[0] = (uint8_t)(voltage_mv & 0xFFU);
+        result->resp_data[1] = (uint8_t)((voltage_mv >> 8) & 0xFFU);
+        result->ack_code = ACK_OK;
+        result->resp_len = 2U;
     } else {
-        voltage_mv = g_ocd_threshold_ch2;
+        result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
+        result->resp_len = 0;
+    }
+}
+
+/**
+ * @brief 处理读取硬件IO过流保护引脚状态命令
+ * @param payload 数据载荷
+ * @param len 数据载荷长度
+ * @param result 命令处理结果
+ */
+void cmd_handle_get_ocp_pin_status(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    uint8_t pin_status;
+    uint8_t positive_pin;
+    uint8_t negative_pin;
+
+    (void)payload;
+
+    /* 数据格式：无参数 */
+    if (len != 0U) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid param length: %d", len);
+        return;
     }
 
-    result->resp_data[0] = (uint8_t)(voltage_mv & 0xFFU);
-    result->resp_data[1] = (uint8_t)((voltage_mv >> 8) & 0xFFU);
-    result->ack_code = ACK_OK;
-    result->resp_len = 2U;
+    /* 读取引脚状态 */
+    pin_status = ocd_get_ocp_pin_status();
+    positive_pin = gpio_read(OCP_POSITIVE_PIN_ID);
+    negative_pin = gpio_read(OCP_NEGTIVE_PIN_ID);
 
-    LOG_D("Get CH%d threshold: %d mV", channel, voltage_mv);
+    /* 返回数据格式：[安全状态(1字节)] [正脉冲引脚状态(1字节)] [负脉冲引脚状态(1字节)] */
+    /* 安全状态：0=安全（两个引脚都为低），1=不安全（至少一个引脚为高） */
+    result->resp_data[0] = pin_status;
+    result->resp_data[1] = positive_pin;
+    result->resp_data[2] = negative_pin;
+    result->ack_code = ACK_OK;
+    result->resp_len = 3U;
+
+    LOG_D("Get OCP pin status: safe=%d, positive=%d, negative=%d",
+          pin_status, positive_pin, negative_pin);
 }
+
+/**
+ * @brief 处理硬件复位过流保护引脚命令
+ * @param payload 数据载荷
+ * @param len 数据载荷长度
+ * @param result 命令处理结果
+ */
+void cmd_handle_reset_ocp_hardware(const uint8_t *payload, uint16_t len, cmd_result_t *result)
+{
+    int ret;
+    uint8_t pin_status;
+
+    (void)payload;
+
+    /* 数据格式：无参数 */
+    if (len != 0U) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid param length: %d", len);
+        return;
+    }
+
+    /* 执行硬件复位（将复位引脚置高） */
+    ret = ocd_reset_ocp_hardware();
+    if (ret != 0) {
+        result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
+        result->resp_len = 0;
+        LOG_E("Failed to reset OCP hardware");
+        return;
+    }
+
+    /* 读取复位后的引脚状态 */
+    pin_status = ocd_get_ocp_pin_status();
+
+    /* 返回数据格式：[安全状态(1字节)] */
+    /* 安全状态：0=安全（两个引脚都为低），1=不安全（至少一个引脚为高） */
+    result->resp_data[0] = pin_status;
+    result->ack_code = ACK_OK;
+    result->resp_len = 1U;
+
+    LOG_D("Reset OCP hardware: safe=%d", pin_status);
+}
+
+/* Private functions ---------------------------------------------------------*/
 

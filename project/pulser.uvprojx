@@ -10,7 +10,7 @@
       <TargetName>stm32_G474QETx</TargetName>
       <ToolsetNumber>0x4</ToolsetNumber>
       <ToolsetName>ARM-ADS</ToolsetName>
-      <pCCUsed>6240000::V6.24::.\ArmCompilerforEmbedded6.24</pCCUsed>
+      <pCCUsed>6230000::V6.23::ARMCLANG</pCCUsed>
       <uAC6>1</uAC6>
       <TargetOption>
         <TargetCommonOption>
@@ -440,11 +440,6 @@
           <GroupName>modules</GroupName>
           <Files>
             <File>
-              <FileName>pulse_engine.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\modules\pulse_engine.c</FilePath>
-            </File>
-            <File>
               <FileName>data_mgmt.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\modules\data_mgmt.c</FilePath>
@@ -501,19 +496,24 @@
               </FileOption>
             </File>
             <File>
-              <FileName>safety.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\modules\safety.c</FilePath>
-            </File>
-            <File>
-              <FileName>current_monitor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\modules\current_monitor.c</FilePath>
-            </File>
-            <File>
               <FileName>ecg_sync.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\modules\ecg_sync.c</FilePath>
+            </File>
+            <File>
+              <FileName>ocd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\modules\ocd.c</FilePath>
+            </File>
+            <File>
+              <FileName>pulse_engine.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\modules\pulse_engine.c</FilePath>
+            </File>
+            <File>
+              <FileName>safety.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\modules\safety.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -848,6 +848,11 @@
               <FileName>bsp_dac.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\drivers\bsp\stm32\hal\bsp_dac.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_dwt.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\drivers\bsp\stm32\hal\bsp_dwt.c</FilePath>
             </File>
           </Files>
         </Group>

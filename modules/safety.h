@@ -11,25 +11,21 @@
   *
   * @attention: None
   ******************************************************************************
-  * @history  : 
+  * @history  :
   *      V1.0 : 1.xxx
   *
   *
-  *     
+  *
   ******************************************************************************
   */
 /*------------------------------ include -------------------------------------*/
+#include <stdint.h>
 
 
 /*------------------------------ Macro definition ----------------------------*/
 
 
 /*------------------------------ typedef definition --------------------------*/
-
-/**
- * @brief 过流保护事件回调函数类型
- */
-typedef void (*ocp_event_cb_t)(void);
 
 /*------------------------------ variable declarations -----------------------*/
 
@@ -38,7 +34,6 @@ typedef void (*ocp_event_cb_t)(void);
 void safety_init(void);
 void safety_task(void);
 void safety_perform_software_reset(void);
-void safety_set_ocp_callback(ocp_event_cb_t callback);
 
 /******************************* End Of File **********************************/
 

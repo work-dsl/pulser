@@ -25,6 +25,10 @@
 #include "errno-base.h"
 #include <string.h>
 
+#define  LOG_TAG             "pulse_engine"
+#define  LOG_LVL             4
+#include "log.h"
+
 /*------------------------------ Macro definition ----------------------------*/
 #define HRTIM_COMPARE_DISABLED_VALUE    (0xFFFBU)     /**< HRTIM比较禁用值 */
 #define TRAIN_GAP_MIN_TICKS             (332U)        /**< 最小串间隙tick值 */
@@ -56,6 +60,7 @@ typedef struct {
     volatile uint16_t       output_count;       /**< 脉冲输出次数计数器 */
     volatile uint16_t       group_cnt;          /**< 当前输出的脉冲群计数器 */
     bool                    hardware_configured;/**< 硬件参数配置标志位 */
+    volatile uint8_t        locked;             /**< 锁定标志：1=锁定（禁止启动），0=未锁定 */
 } pulse_control_t;
 
 /**
@@ -76,7 +81,8 @@ static pulse_control_t g_control = {
     .status = PULSE_STATUS_IDLE,
     .output_count = 0U,
     .group_cnt = 0U,
-    .hardware_configured = false
+    .hardware_configured = false,
+    .locked = 1U  /* 初始状态：锁定（禁止启动），硬件初始化成功后解除 */
 };
 
 /** @brief 硬件配置（DMA缓冲区存放在外部SRAM） */
@@ -85,7 +91,7 @@ static EXTSRAM pulse_hw_config_t g_hw_config = {0};
 /*------------------------------ function prototypes -------------------------*/
 static bool param_is_valid(const pulse_params_t *param);
 static void config_next_group_params(uint8_t group_idx);
-static void start_pulse_output(void);
+static void pulse_output_restart(void);
 static void stop_pulse_output(void);
 static int32_t pulse_out_set_hardware(void);
 static int32_t pulse_out_set_group_gap(uint16_t gap_value);
@@ -97,23 +103,55 @@ static void on_ecg_trigger_callback(void);
 /**
  * @brief 初始化脉冲引擎模块
  *
- * @details 将所有内部状态变量和参数缓冲区重置为初始值
+ * @details 初始化所有内部状态变量和参数缓冲区，并初始化相关硬件。
+ *          初始化时先设置锁定状态，只有当所有硬件正确初始化后才解除锁定。
  *
- * @return 无
+ * @return int32_t 返回状态
+ * @retval  0 初始化成功
+ * @retval -EIO 硬件初始化失败
  */
-void pulse_engine_init(void)
+int32_t pulse_engine_init(void)
 {
+    int32_t result = 0;
+
+    /* 初始化控制状态 */
     g_control.mode = PULSE_MODE_NORMAL;
     g_control.status = PULSE_STATUS_IDLE;
     g_control.output_count = 0U;
     g_control.group_cnt = 0U;
     g_control.hardware_configured = false;
+    g_control.locked = 1U;  /* 初始状态：锁定（禁止启动） */
 
     g_params.group_num = 0U;
     g_params.expected_num_of_group = 0U;
     g_params.expected_group_num = 1U;
     g_params.group_gap_ms = 0U;
     (void)memset(g_params.seq_buf, 0, sizeof(g_params.seq_buf));
+
+    /* 初始化脉冲引擎相关硬件 */
+    /* 1. 初始化HRTIM（高分辨率定时器） */
+    if (bsp_hrtim_init() != 0) {
+        LOG_E("HRTIM initialization failed");
+        result = -EIO;
+        /* 保持锁定状态，不继续初始化 */
+    } else {
+        /* 2. 初始化TIM6（群间隙定时器） */
+        MX_TIM6_Init();
+        /* 注意：MX_TIM6_Init()失败会调用Error_Handler()，所以这里假设成功 */
+
+        /* 3. 初始化TIM4（心电R波检测定时器） */
+        MX_TIM4_Init();
+
+        /* 4. 初始化TIM7（心电触发延时定时器） */
+        MX_TIM7_Init();
+
+        /* 5. 初始化TIM15（心电停止时间定时器） */
+        MX_TIM15_Init();
+
+        /* 所有硬件初始化成功，解除锁定 */
+        g_control.locked = 0U;
+        LOG_D("Pulse engine hardware initialized successfully");
+    }
 
     /* 初始化心电同步模块 */
     ecg_sync_init();
@@ -123,6 +161,12 @@ void pulse_engine_init(void)
 
     /* 设置脉冲输出完成回调 */
     ecg_sync_set_pulse_complete_callback(pulse_engine_notify_output_complete);
+
+    if (result != 0) {
+        LOG_E("Pulse engine initialization failed, locked");
+    }
+
+    return result;
 }
 
 /**
@@ -335,6 +379,30 @@ void pulse_engine_notify_output_complete(void)
 }
 
 /**
+ * @brief 设置锁定状态
+ *
+ * @param[in] locked 锁定状态：1=锁定，0=解锁
+ *
+ * @return 无
+ *
+ * @details 通常用于过流保护后锁定，或硬件初始化失败时锁定
+ */
+void pulse_engine_set_lock(uint8_t locked)
+{
+    g_control.locked = (locked != 0U) ? 1U : 0U;
+}
+
+/**
+ * @brief 获取锁定状态
+ *
+ * @return uint8_t 锁定状态：1=锁定，0=未锁定
+ */
+uint8_t pulse_engine_get_lock(void)
+{
+    return g_control.locked;
+}
+
+/**
  * @brief 参数有效性检查
  *
  * @param[in] param 脉冲参数指针
@@ -491,6 +559,12 @@ int32_t pulse_engine_start(void)
 {
     int32_t result = -EINVAL;
 
+    /* 检查锁定状态 */
+    if (g_control.locked != 0U) {
+        LOG_W("Pulse engine locked, cannot start (hardware not initialized or OCP triggered)");
+        return -EPERM;
+    }
+
     /* 检查参数是否完整 */
     if ((g_params.group_num == g_params.expected_num_of_group) && (g_params.group_num > 0U)) {
         /* 检查是否正在运行且硬件参数已经配置 */
@@ -510,7 +584,7 @@ int32_t pulse_engine_start(void)
                 config_next_group_params(0U);
 
                 /* 启动脉冲输出 */
-                start_pulse_output();
+                pulse_output_restart();
 
                 result = 0;
             } else if (g_control.mode == PULSE_MODE_ECG_SYNC) {
@@ -630,7 +704,7 @@ static inline void stop_pulse_output(void)
  *
  * @details 使能HRTIM输出并启动定时器
  */
-static inline void start_pulse_output(void)
+static inline void pulse_output_restart(void)
 {
     LL_HRTIM_EnableOutput(HRTIM1, LL_HRTIM_OUTPUT_TA1 | LL_HRTIM_OUTPUT_TA2);
     LL_HRTIM_TIM_CounterEnable(HRTIM1, LL_HRTIM_TIMER_A | LL_HRTIM_TIMER_B);
@@ -647,6 +721,14 @@ static inline void start_pulse_output(void)
  */
 static inline void start_pulse_internal(void)
 {
+    /* 检查锁定状态 */
+    if (g_control.locked != 0U) {
+        LOG_W("Pulse engine locked, cancel ECG trigger");
+        g_control.status = PULSE_STATUS_IDLE;
+        ecg_sync_cancel();
+        return;
+    }
+
     /* 重置群计数器 */
     g_control.group_cnt = 0U;
 
@@ -654,7 +736,7 @@ static inline void start_pulse_internal(void)
     config_next_group_params(0U);
 
     /* 启动脉冲输出 */
-    start_pulse_output();
+    pulse_output_restart();
 }
 
 /**
@@ -738,8 +820,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6)
     {
-        /* 群间隙定时器超时，启动下一组脉冲输出 */
-        start_pulse_output();
+        /* 群间隙定时器超时，重新启动下一组脉冲输出 */
+        pulse_output_restart();
         __HAL_TIM_DISABLE(&htim6);
     } else if ((htim->Instance == TIM7) || (htim->Instance == TIM15)) {
         /* TIM7和TIM15由心电同步模块处理 */

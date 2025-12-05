@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 /* Includes ------------------------------------------------------------------*/
-#include "current_monitor.h"
+#include "ocd.h"
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -68,6 +68,8 @@ typedef enum {
 #define CMD_GET_OCD_VOLTAGE_THRESHOLD       (0x39)  /**< 获取过流检测的电压阈值 */
 #define CMD_PULSE_ENGINE_STATUS_UPLOAD      (0x3A)  /**< 脉冲序列输出完成状态上报 */
 #define CMD_OVER_CURRENT_STATUS_UPLOAD      (0x3B)  /**< 过流状态信息上报 */
+#define CMD_GET_OCP_PIN_STATUS              (0x3C)  /**< 读取硬件IO过流保护引脚状态 */
+#define CMD_RESET_OCP_HARDWARE              (0x3D)  /**< 复位硬件过流保护 */
 /**
  * @}
  */

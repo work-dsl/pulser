@@ -11,11 +11,11 @@
   *
   * @attention: None
   ******************************************************************************
-  * @history  : 
+  * @history  :
   *      V1.0 : 1.xxx
   *
   *
-  *     
+  *
   ******************************************************************************
   */
 /*------------------------------ include --------------------------------------*/
@@ -33,21 +33,13 @@
 /*------------------------------ variables prototypes -------------------------*/
 stimer_t led_timer;
 
-/**
- * @brief 过流保护事件回调函数指针
- */
-static ocp_event_cb_t g_ocp_callback = NULL;
-
 static struct watchdog_device* iwdg_dev = NULL;
-
-/*------------------------------ function prototypes --------------------------*/
-static void OCP_handle(void *args);
 
 /*------------------------------ application ----------------------------------*/
 void led_timer_callback(void* arg)
 {
     stimer_t *timer = (stimer_t*)arg;
-    
+
     if (gpio_read(LED_PIN_ID) == 1) {
         gpio_write(LED_PIN_ID, 0);
         stimer_change_period(timer, 200);
@@ -62,23 +54,11 @@ void safety_init(void)
     /* set led gpio mode */
     gpio_set_mode(LED_PIN_ID, PIN_OUTPUT_PP, PIN_PULL_UP);
     gpio_write(LED_PIN_ID, 1);
-    
-    /* 过流保护引脚配置 */
-    gpio_set_mode(OCP_POSITIVE_PIN_ID, PIN_INPUT, PIN_PULL_NONE);
-    gpio_set_mode(OCP_NEGTIVE_PIN_ID, PIN_INPUT, PIN_PULL_NONE);
-    
-    gpio_attach_irq (OCP_POSITIVE_PIN_ID, PIN_EVENT_RISING_EDGE, OCP_handle, NULL);
-    gpio_irq_enable (OCP_POSITIVE_PIN_ID, 1);
-    
-    gpio_attach_irq (OCP_NEGTIVE_PIN_ID, PIN_EVENT_RISING_EDGE, OCP_handle, NULL);
-    gpio_irq_enable (OCP_NEGTIVE_PIN_ID, 1);
-    
-    gpio_set_mode(OCP_RESET_PIN_ID, PIN_OUTPUT_PP, PIN_PULL_DOWN);
-    gpio_write(OCP_RESET_PIN_ID, 0);
-    
+
+
     stimer_create(&led_timer, 800, STIMER_AUTO_RELOAD, led_timer_callback, (void*)&led_timer);
     stimer_start(&led_timer);
-    
+
     iwdg_dev = watchdog_find("iwdg");
     if (iwdg_dev != NULL) {
         watchdog_set_timeout(iwdg_dev, 1000);
@@ -94,37 +74,19 @@ void safety_task(void)
 void safety_perform_software_reset(void)
 {
     __disable_irq();
-    
+
     // 确保 Flash 操作完成
     FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
-    
+
     IWDG->KR = 0xAAAA;
-    
+
     // 触发软件复位
     NVIC_SystemReset();
-    
+
     // 复位指令发出后，CPU 还需要几个时钟周期才能真正复位
     // 加个死循环防止 CPU 继续往下乱跑
     while(1) {}
 }
 
-static void OCP_handle(void *args)
-{
-    (void)args;
-    
-    /* 调用过流保护回调函数 */
-    if (g_ocp_callback != NULL) {
-        g_ocp_callback();
-    }
-}
-
-/**
- * @brief 设置过流保护事件回调函数
- * @param callback 回调函数指针
- */
-void safety_set_ocp_callback(ocp_event_cb_t callback)
-{
-    g_ocp_callback = callback;
-}
 
 /******************************* End Of File ************************************/
