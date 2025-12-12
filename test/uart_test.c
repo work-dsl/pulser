@@ -48,7 +48,6 @@ uint8_t r2_buff[128];
 void uart_test_init(void)
 {
     int32_t ret;
-    uint32_t baud;
 
     port1 = serial_find("uart1");
     if (!port1) {
@@ -81,7 +80,6 @@ void uart_test_init(void)
 void uart_test_task(void)
 {
     int ret;
-    static int count = 0;
     
     ret = serial_read(port1, r1_buff, 128);
     if (ret > 0)

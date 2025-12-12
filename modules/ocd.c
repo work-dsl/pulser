@@ -78,11 +78,10 @@ static uint16_t g_ocd_threshold_ch2 = 0U;  /**< 通道2阈值 */
 /* Exported variables  -------------------------------------------------------*/
 
 /* Private function prototypes -----------------------------------------------*/
-static uint16_t get_dma_current_position(DMA_HandleTypeDef *hdma, uint16_t *buf, uint16_t buf_size);
+static uint16_t get_dma_current_position(DMA_HandleTypeDef *hdma, uint16_t buf_size);
 static uint16_t find_peak_in_window(uint16_t *buf, uint16_t buf_size, uint16_t center_pos, uint16_t window_size);
 static uint16_t adc_value_to_voltage(uint16_t adc_value);
 static uint16_t voltage_to_dac_value(uint16_t voltage_mv);
-static void ocp_io_handle(void *args);
 
 /* Exported functions --------------------------------------------------------*/
 
@@ -246,11 +245,11 @@ void ocd_handle_ocp_trigger(ocd_ch_t channel)
     if (channel == OCD_POSITIVE) {
         HAL_ADC_Stop_DMA(&hadc1);
         /* 获取停止时的DMA位置 */
-        dma_pos = get_dma_current_position(&hdma_adc1, ch_info->buffer, ch_info->buf_size);
+        dma_pos = get_dma_current_position(&hdma_adc1, ch_info->buf_size);
     } else {
         HAL_ADC_Stop_DMA(&hadc2);
         /* 获取停止时的DMA位置 */
-        dma_pos = get_dma_current_position(&hdma_adc2, ch_info->buffer, ch_info->buf_size);
+        dma_pos = get_dma_current_position(&hdma_adc2, ch_info->buf_size);
     }
 
     /* 标记触发位置和标志 */
@@ -318,7 +317,7 @@ void ocd_process_ocp_event(void)
  * @param buf_size 缓冲区大小
  * @return 当前位置索引（0 ~ buf_size-1）
  */
-static uint16_t get_dma_current_position(DMA_HandleTypeDef *hdma, uint16_t *buf, uint16_t buf_size)
+static uint16_t get_dma_current_position(DMA_HandleTypeDef *hdma, uint16_t buf_size)
 {
     uint32_t remaining;
     uint32_t transferred;
@@ -417,10 +416,32 @@ uint8_t ocd_get_ocp_pin_status(void)
  * @return 0: 成功，-1: 失败
  * @note  复位后需要检查引脚状态确认是否真正安全
  */
-int ocd_reset_ocp_hardware(void)
+int ocd_reset(void)
 {
+    HAL_StatusTypeDef status;
+    
     /* 将复位引脚置高，触发硬件恢复 */
     gpio_write(OCP_RESET_PIN_ID, 1);
+    
+    HAL_Delay(1);
+    
+    gpio_write(OCP_RESET_PIN_ID, 0);
+    
+    /* 恢复ADC DMA循环采样 */
+    status = HAL_ADC_Start_DMA(&hadc1,
+                                (uint32_t*)g_channel_info[OCD_POSITIVE].buffer,
+                                g_channel_info[OCD_POSITIVE].buf_size);
+    if (status != HAL_OK) {
+        LOG_E("Failed to start ADC1 DMA: %d", status);
+        return -EIO;
+    }
+    status = HAL_ADC_Start_DMA(&hadc2,
+                                (uint32_t*)g_channel_info[OCD_NEGTIVE].buffer,
+                                g_channel_info[OCD_NEGTIVE].buf_size);
+    if (status != HAL_OK) {
+        LOG_E("Failed to start ADC2 DMA: %d", status);
+        return -EIO;
+    }
 
     return 0;
 }

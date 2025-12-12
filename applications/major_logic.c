@@ -179,14 +179,14 @@ static void on_ocp_info_callback(const ocp_info_t *info)
         return;
     }
 
-    LOG_I("Over-current detected: CH%d, voltage=%d mV",
-          info->channel, info->voltage_mv);
-
     /* 设置过流锁定 */
-    pulse_engine_set_lock(1U);
+    pulse_engine_ctrl_lock(1U);
 
     /* 上报过流信息给上位机 */
     slave_upload_ocp_info(info);
+    
+    LOG_I("Over-current detected: CH%d, voltage=%d mV",
+          info->channel, info->voltage_mv);
 }
 
 /**
@@ -195,15 +195,17 @@ static void on_ocp_info_callback(const ocp_info_t *info)
  */
 static void on_ocp_io_handler(void *arg)
 {
+    (void)arg;
+    
     /* 停止脉冲输出 */
     pulse_engine_stop();
     
-    LOG_I("Over-current detected! Stopping pulse engine...");
-    
     /* 设置过流锁定 */
-    pulse_engine_set_lock(1U);
+    pulse_engine_ctrl_lock(1U);
 
     /* 上报过流信息给上位机 */
+    
+    LOG_I("Over-current detected! Stopping pulse engine...");
 }
 
 /**

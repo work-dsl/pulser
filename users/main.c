@@ -52,8 +52,6 @@
  */
 int main(void)
 {
-    int ret;
-
     /* 底层驱动初始化 */
     board_init();
 

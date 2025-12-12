@@ -373,13 +373,11 @@ int32_t pulse_engine_get_status(pulse_report_t* report)
  */
 void pulse_engine_notify_output_complete(void)
 {
-    /* 只增加输出计数，不修改状态 */
-    /* 状态由调用者根据实际情况设置为IDLE或保持RUNNING */
     g_control.output_count++;
 }
 
 /**
- * @brief 设置锁定状态
+ * @brief 控制锁定状态
  *
  * @param[in] locked 锁定状态：1=锁定，0=解锁
  *
@@ -387,7 +385,7 @@ void pulse_engine_notify_output_complete(void)
  *
  * @details 通常用于过流保护后锁定，或硬件初始化失败时锁定
  */
-void pulse_engine_set_lock(uint8_t locked)
+void pulse_engine_ctrl_lock(uint8_t locked)
 {
     g_control.locked = (locked != 0U) ? 1U : 0U;
 }

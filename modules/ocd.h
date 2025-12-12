@@ -67,7 +67,7 @@ void    ocd_stop(void);
 void    ocd_handle_ocp_trigger(ocd_ch_t channel);
 void    ocd_process_ocp_event(void);
 uint8_t ocd_get_ocp_pin_status(void);
-int     ocd_reset_ocp_hardware(void);
+int     ocd_reset(void);
 
 
 #ifdef __cplusplus

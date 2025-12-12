@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": "f:/Work_Projects/DSL/PFA/trunk/modules",
-      "program": "f:/Work_Projects/DSL/PFA/trunk/modules/build/Debug/outDebug",
+      "cwd": "f:/Work_Projects/DSL/PFA/trunk/drivers/bsp/stm32/hal",
+      "program": "f:/Work_Projects/DSL/PFA/trunk/drivers/bsp/stm32/hal/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

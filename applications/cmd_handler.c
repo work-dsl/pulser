@@ -45,13 +45,6 @@
  */
 static cmd_response_cb_t g_response_callback = NULL;
 
-/**
- * @brief 上次的脉冲引擎状态（用于检测状态变化）
- */
-static volatile pulse_status_t g_last_pulse_status = PULSE_STATUS_IDLE;
-
-
-
 /* Private function prototypes -----------------------------------------------*/
 
 /* Exported variables  -------------------------------------------------------*/
@@ -708,7 +701,7 @@ void cmd_handle_reset_ocp_hardware(const uint8_t *payload, uint16_t len, cmd_res
     }
 
     /* 执行硬件复位（将复位引脚置高） */
-    ret = ocd_reset_ocp_hardware();
+    ret = ocd_reset();
     if (ret != 0) {
         result->ack_code = ACK_ERR_OPERATE_ABNORMAL;
         result->resp_len = 0;
@@ -718,6 +711,11 @@ void cmd_handle_reset_ocp_hardware(const uint8_t *payload, uint16_t len, cmd_res
 
     /* 读取复位后的引脚状态 */
     pin_status = ocd_get_ocp_pin_status();
+    
+    /* 解除脉冲锁定 */
+    if (pin_status == 0U) {
+        pulse_engine_ctrl_lock(0U);
+    }
 
     /* 返回数据格式：[安全状态(1字节)] */
     /* 安全状态：0=安全（两个引脚都为低），1=不安全（至少一个引脚为高） */

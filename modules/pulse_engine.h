@@ -28,11 +28,11 @@ extern "C" {
 #define PULSE_PARAMETERS_ARE_VARIABLE   (0)    /* 是否支持脉冲参数动态变化 */
 
 /* 脉冲宽度限制 */
-#define PULSE_PW_MIN                    (200)   /* 最小脉冲宽度 (ns) */
+#define PULSE_PW_MIN                    (50)   /* 最小脉冲宽度 (ns) */
 #define PULSE_PW_MAX                    (10000) /* 最大脉冲宽度 (ns) */
 
 /* 脉冲间隙限制 */
-#define PULSE_GAP_MIN                   (200)   /* 最小脉冲间隙 (ns) */
+#define PULSE_GAP_MIN                   (1000)  /* 最小脉冲间隙 (ns) */
 #define PULSE_GAP_MAX                   (30000) /* 最大脉冲间隙 (ns) */
 
 /* 脉冲宽度变化参数限制 */
@@ -152,7 +152,7 @@ int32_t pulse_engine_start(void);
 int32_t pulse_engine_stop(void);
 int32_t pulse_engine_get_status(pulse_report_t* report);
 void pulse_engine_notify_output_complete(void);
-void pulse_engine_set_lock(uint8_t locked);
+void pulse_engine_ctrl_lock(uint8_t locked);
 uint8_t pulse_engine_get_lock(void);
 
 #ifdef __cplusplus
