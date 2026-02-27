@@ -20,7 +20,7 @@
 #include <string.h>
 
 #define  LOG_TAG             "uart_test"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 /* Private typedef -----------------------------------------------------------*/
 

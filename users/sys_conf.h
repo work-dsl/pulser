@@ -21,6 +21,8 @@
 #define USING_HW_ATOMIC
 
 #define LOG_GLOBAL_LVL          LOG_LVL_DEBUG
+#define LOG_BUF_SIZE            (256)
+#define LOG_ASSERT_ENABLE       (0)
 
 /* Exported typedef ----------------------------------------------------------*/
 

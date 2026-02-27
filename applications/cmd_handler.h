@@ -29,7 +29,7 @@ extern "C" {
  */
 typedef struct {
     uint8_t  ack_code;          /**< 应答码 */
-    uint8_t  resp_data[256];    /**< 响应数据缓冲区 */
+    uint8_t  resp_data[512];    /**< 响应数据缓冲区 */
     uint16_t resp_len;          /**< 响应数据长度 */
 } cmd_result_t;
 

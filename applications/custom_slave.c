@@ -27,12 +27,15 @@
 #include "bsp_dac.h"
 
 #define  LOG_TAG             "custom_slave"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 
 /* Private typedef -----------------------------------------------------------*/
 
 /* Private define ------------------------------------------------------------*/
+
+#define DEBUG_PORT_NAME         ("uart1")
+#define CENTRAL_CTRL_PORT_NAME  ("uart2")
 
 /* Private macro -------------------------------------------------------------*/
 
@@ -75,16 +78,16 @@ int slave_proto_init(void)
 {
     int ret;
 
-    port = serial_find("uart1");
+    port = serial_find(DEBUG_PORT_NAME);
     if (port == NULL) {
-        LOG_D("Failed to find uart1\r\n");
+        LOG_D("Failed to find uart2\r\n");
         return -ENODEV;
     }
 
     /* 初始化串口设备 */
     ret = serial_open(port);
     if (ret != 0) {
-        LOG_D("Failed to initialize uart1: %d\r\n", ret);
+        LOG_D("Failed to initialize uart2: %d\r\n", ret);
         return ret;
     }
 
@@ -126,8 +129,8 @@ int slave_proto_init(void)
  */
 void slave_proto_task(void)
 {
-    uint8_t frame_buf[PROTO_CUSTOM_FRAME_MAX_LEN];
-    unsigned int frame_len;
+    static uint8_t frame_buf[PROTO_CUSTOM_FRAME_MAX_LEN];
+    unsigned int frame_len = 0;
 
     if (port != NULL) {
         (void)proto_poll(&g_slave_proto, &port->rx_fifo);
@@ -162,6 +165,11 @@ static void slave_proto_error_callback(void *inst, proto_err_t err)
     (void)inst;
 
     if (port == NULL) {
+        return;
+    }
+
+    /* 未完成握手时，不发送错误回包，避免噪声放大 */
+    if (g_slave_state != SLAVE_STATE_ACTIVE) {
         return;
     }
 

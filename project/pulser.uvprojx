@@ -358,7 +358,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath></IncludePath>
+              <IncludePath>..\users;..\middlewares\RTT</IncludePath>
             </VariousControls>
           </Aads>
           <LDads>
@@ -371,7 +371,7 @@
             <TextAddressRange>0x08000000</TextAddressRange>
             <DataAddressRange>0x20000000</DataAddressRange>
             <pXoBase></pXoBase>
-            <ScatterFile>.\Objects\pulser.sct</ScatterFile>
+            <ScatterFile>.\pulser.sct</ScatterFile>
             <IncludeLibs></IncludeLibs>
             <IncludeLibsPath></IncludeLibsPath>
             <Misc></Misc>
@@ -551,62 +551,6 @@
               <FilePath>..\devices\gpio.c</FilePath>
             </File>
             <File>
-              <FileName>watchdog.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\devices\watchdog.c</FilePath>
-              <FileOption>
-                <CommonProperty>
-                  <UseCPPCompiler>2</UseCPPCompiler>
-                  <RVCTCodeConst>0</RVCTCodeConst>
-                  <RVCTZI>0</RVCTZI>
-                  <RVCTOtherData>0</RVCTOtherData>
-                  <ModuleSelection>0</ModuleSelection>
-                  <IncludeInBuild>1</IncludeInBuild>
-                  <AlwaysBuild>2</AlwaysBuild>
-                  <GenerateAssemblyFile>2</GenerateAssemblyFile>
-                  <AssembleAssemblyFile>2</AssembleAssemblyFile>
-                  <PublicsOnly>2</PublicsOnly>
-                  <StopOnExitCode>11</StopOnExitCode>
-                  <CustomArgument></CustomArgument>
-                  <IncludeLibraryModules></IncludeLibraryModules>
-                  <ComprImg>1</ComprImg>
-                </CommonProperty>
-                <FileArmAds>
-                  <Cads>
-                    <interw>2</interw>
-                    <Optim>0</Optim>
-                    <oTime>2</oTime>
-                    <SplitLS>2</SplitLS>
-                    <OneElfS>2</OneElfS>
-                    <Strict>2</Strict>
-                    <EnumInt>2</EnumInt>
-                    <PlainCh>2</PlainCh>
-                    <Ropi>2</Ropi>
-                    <Rwpi>2</Rwpi>
-                    <wLevel>0</wLevel>
-                    <uThumb>2</uThumb>
-                    <uSurpInc>2</uSurpInc>
-                    <uC99>2</uC99>
-                    <uGnu>2</uGnu>
-                    <useXO>2</useXO>
-                    <v6Lang>0</v6Lang>
-                    <v6LangP>0</v6LangP>
-                    <vShortEn>2</vShortEn>
-                    <vShortWch>2</vShortWch>
-                    <v6Lto>2</v6Lto>
-                    <v6WtE>2</v6WtE>
-                    <v6Rtti>2</v6Rtti>
-                    <VariousControls>
-                      <MiscControls></MiscControls>
-                      <Define></Define>
-                      <Undefine></Undefine>
-                      <IncludePath></IncludePath>
-                    </VariousControls>
-                  </Cads>
-                </FileArmAds>
-              </FileOption>
-            </File>
-            <File>
               <FileName>mtd_core.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\devices\mtd_core.c</FilePath>
@@ -630,6 +574,11 @@
               <FileName>dac.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\devices\dac.c</FilePath>
+            </File>
+            <File>
+              <FileName>wdg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\devices\wdg.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -1070,14 +1019,14 @@
           <GroupName>test</GroupName>
           <Files>
             <File>
-              <FileName>led_test.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\test\led_test.c</FilePath>
-            </File>
-            <File>
               <FileName>uart_test.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\test\uart_test.c</FilePath>
+            </File>
+            <File>
+              <FileName>gpio_test.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\test\gpio_test.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -1093,12 +1042,6 @@
 
   <RTE>
     <apis>
-      <api Capiversion="1.1.0" Cclass="CMSIS-Compiler" Cgroup="STDERR" condition="CortexDevice" exclusive="1">
-        <package name="CMSIS-Compiler" schemaVersion="1.7.36" url="https://www.keil.com/pack/" vendor="ARM" version="2.1.0"/>
-        <targetInfos>
-          <targetInfo name="stm32_G474QETx"/>
-        </targetInfos>
-      </api>
       <api Capiversion="1.1.0" Cclass="CMSIS-Compiler" Cgroup="STDOUT" condition="CortexDevice" exclusive="1">
         <package name="CMSIS-Compiler" schemaVersion="1.7.36" url="https://www.keil.com/pack/" vendor="ARM" version="2.1.0"/>
         <targetInfos>
@@ -1108,12 +1051,6 @@
     </apis>
     <components>
       <component Cclass="CMSIS-Compiler" Cgroup="CORE" Cvendor="ARM" Cversion="1.1.0" condition="ARMCC CortexDevice">
-        <package name="CMSIS-Compiler" schemaVersion="1.7.36" url="https://www.keil.com/pack/" vendor="ARM" version="2.1.0"/>
-        <targetInfos>
-          <targetInfo name="stm32_G474QETx"/>
-        </targetInfos>
-      </component>
-      <component Capiversion="1.1.0" Cclass="CMSIS-Compiler" Cgroup="STDERR" Csub="Custom" Cvendor="ARM" Cversion="1.1.0" condition="CORE" custom="1">
         <package name="CMSIS-Compiler" schemaVersion="1.7.36" url="https://www.keil.com/pack/" vendor="ARM" version="2.1.0"/>
         <targetInfos>
           <targetInfo name="stm32_G474QETx"/>

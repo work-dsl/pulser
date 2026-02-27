@@ -25,6 +25,9 @@
 #include "stimer.h"
 #include "watchdog.h"
 
+#define  LOG_TAG             "safty"
+#define  LOG_LVL             3
+#include "log.h"
 /*------------------------------ Macro definition -----------------------------*/
 
 
@@ -55,20 +58,23 @@ void safety_init(void)
     gpio_set_mode(LED_PIN_ID, PIN_OUTPUT_PP, PIN_PULL_UP);
     gpio_write(LED_PIN_ID, 1);
 
-
-    stimer_create(&led_timer, 800, STIMER_AUTO_RELOAD, led_timer_callback, (void*)&led_timer);
-    stimer_start(&led_timer);
-
-    iwdg_dev = watchdog_find("iwdg");
-    if (iwdg_dev != NULL) {
-        watchdog_set_timeout(iwdg_dev, 1000);
-        watchdog_start(iwdg_dev);
+    if (stimer_create(&led_timer, 800, STIMER_AUTO_RELOAD, led_timer_callback, (void*)&led_timer) != 0){
+        LOG_E("stimer_create errno!");
     }
+    if (stimer_start(&led_timer) != 0) {
+        LOG_E("stimer_start errno!");
+    }
+
+//    iwdg_dev = watchdog_find("iwdg");
+//    if (iwdg_dev != NULL) {
+//        watchdog_set_timeout(iwdg_dev, 1000);
+//        watchdog_start(iwdg_dev);
+//    }
 }
 
 void safety_task(void)
 {
-    watchdog_ping(iwdg_dev);
+//    watchdog_ping(iwdg_dev);
 }
 
 void safety_perform_software_reset(void)

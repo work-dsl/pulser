@@ -21,7 +21,7 @@
 #include <stdio.h>
 
 #define  LOG_TAG             "data_mgmt"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 
 /* Private typedef -----------------------------------------------------------*/

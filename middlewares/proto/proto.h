@@ -49,12 +49,12 @@ typedef enum {
  */
 typedef enum {
     PROTO_ERR_NONE = 0,         /**< 无错误 */
-    PROTO_ERR_LEN_INVALID,      /**< 长度非法（超过 max_frame_len 或 FIFO 容量） */
-    PROTO_ERR_CHECKSUM,         /**< 校验和失败 */
+    PROTO_ERR_LEN_INVALID,      /**< 长度字段过小或超限（小于 min_frame_len/超过 max_frame_len） */
+    PROTO_ERR_CHECKSUM,         /**< 校验失败 */
     PROTO_ERR_TAIL,             /**< 尾部匹配失败 */
     PROTO_ERR_OUT_FIFO_FULL,    /**< 输出队列已满，有效载荷丢失 */
     PROTO_ERR_BUFF_OVERFLOW,    /**< 缓冲区溢出（仅针对 FRAME_TYPE_TAIL） */
-    PROTO_ERR_TIMEOUT           /**< 接收帧超时 */
+    PROTO_ERR_TIMEOUT           /**< 接收帧超时（也可能是长度字段过大但没有超限导致的） */
 } proto_err_t;
 
 /**
@@ -62,8 +62,6 @@ typedef enum {
  * @param frame_head 帧头数据指针
  * @param raw_len 从长度字段直接读取的原始值
  * @return 最终整帧长度
- * @details 用于对长度字段进行语义转换，例如长度字段可能表示payload长度，
- *          需要加上帧头、帧尾、校验等固定开销才是整帧长度
  */
 typedef uint16_t (*proto_len_dec_cb_t)(const uint8_t *frame_head, uint16_t raw_len);
 
@@ -78,7 +76,6 @@ typedef uint32_t (*proto_checksum_cb_t)(const uint8_t *data, uint16_t len);
 /**
  * @brief 时间戳获取回调函数类型
  * @return 当前时间戳（毫秒）
- * @details 用于超时检测，需要返回单调递增的时间戳
  */
 typedef uint32_t (*proto_tick_cb_t)(void);
 
@@ -86,13 +83,11 @@ typedef uint32_t (*proto_tick_cb_t)(void);
  * @brief 错误回调函数类型
  * @param proto_inst 协议解析器实例指针（void *类型，需转换为proto_t *）
  * @param err 错误码
- * @details 当协议解析器检测到错误时调用此函数
  */
 typedef void (*proto_error_cb_t)(void *proto_inst, proto_err_t err);
 
 /**
  * @brief 长度字段配置结构体
- * @details 仅当帧类型为 FRAME_TYPE_LEN_FIELD 时有效
  */
 typedef struct {
     uint8_t             len_offset;     /**< 长度字段相对于帧头起始字节的偏移 */
@@ -102,7 +97,6 @@ typedef struct {
 
 /**
  * @brief 协议配置结构体
- * @details 建议定义为 const 类型，在初始化时传入
  */
 typedef struct {
     frame_type_t        type;           /**< 帧类型 */
@@ -154,7 +148,7 @@ typedef struct {
     p_state_t           state;          /**< 当前解析状态 */
     uint16_t            w_idx;          /**< 当前 rx_buf 写入索引 */
     uint16_t            target_len;     /**< 当前帧的目标长度 */
-    uint32_t            last_tick;       /**< 上次接收字节的时间戳 */
+    uint32_t            last_tick;      /**< 上次接收字节的时间戳 */
     
     /* 接口回调 */
     proto_tick_cb_t     get_tick;       /**< 时间戳获取回调（可为NULL） */
@@ -169,9 +163,12 @@ typedef struct {
 
 /* Exported functions --------------------------------------------------------*/
 
-int  proto_init         (proto_t *inst, const proto_cfg_t *cfg, 
-                        uint8_t *rx_buf, uint16_t buf_size,
-                        kfifo_t *out_fifo, proto_error_cb_t on_err);
+int  proto_init         (proto_t *inst,
+                         const proto_cfg_t *cfg,
+                         uint8_t *rx_buf,
+                         uint16_t buf_size,
+                         kfifo_t *out_fifo,
+                         proto_error_cb_t on_err);
 void proto_set_tick_cb  (proto_t *inst, proto_tick_cb_t get_tick);
 int  proto_poll         (proto_t *inst, kfifo_t *in_fifo);
 void proto_reset        (proto_t *inst);

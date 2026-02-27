@@ -22,7 +22,7 @@
 #include "custom_slave.h"
 
 #define  LOG_TAG             "major_logic"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 
 /* Private typedef -----------------------------------------------------------*/
@@ -204,7 +204,6 @@ static void on_ocp_io_handler(void *arg)
     pulse_engine_ctrl_lock(1U);
 
     /* 上报过流信息给上位机 */
-    
     LOG_I("Over-current detected! Stopping pulse engine...");
 }
 
@@ -217,12 +216,13 @@ void HRTIM1_FLT_IRQHandler(void)
     if(LL_HRTIM_IsActiveFlag_FLT4(HRTIM1))
     {
         LL_HRTIM_ClearFlag_FLT4(HRTIM1);
-        
+        LOG_D("HRTIM1_FLT_IRQHandler FLT4 happened!");
     }
 
     /* 检查 Fault 5 (COMP3) */
     if(LL_HRTIM_IsActiveFlag_FLT5(HRTIM1))
     {
         LL_HRTIM_ClearFlag_FLT5(HRTIM1);
+        LOG_D("HRTIM1_FLT_IRQHandler FLT5 happened!");
     }
 }

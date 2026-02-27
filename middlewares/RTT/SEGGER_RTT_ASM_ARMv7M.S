@@ -1,7 +1,28 @@
 /*********************************************************************
-*                   (c) SEGGER Microcontroller GmbH                  *
+*                     SEGGER Microcontroller GmbH                    *
 *                        The Embedded Experts                        *
-*                           www.segger.com                           *
+**********************************************************************
+*                                                                    *
+*       (c) 1995 - 2022 SEGGER Microcontroller GmbH                  *
+*                                                                    *
+*       Internet: segger.com  Support: support_embos@segger.com      *
+*                                                                    *
+**********************************************************************
+*                                                                    *
+*       embOS * Real time operating system                           *
+*                                                                    *
+*       Please note:                                                 *
+*                                                                    *
+*       Knowledge of this file may under no circumstances            *
+*       be used to write a similar product or a real-time            *
+*       operating system for in-house use.                           *
+*                                                                    *
+*       Thank you for your fairness !                                *
+*                                                                    *
+**********************************************************************
+*                                                                    *
+*       OS version: V5.18.0.0                                        *
+*                                                                    *
 **********************************************************************
 
 -------------------------- END-OF-HEADER -----------------------------

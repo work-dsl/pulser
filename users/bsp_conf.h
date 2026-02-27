@@ -107,19 +107,19 @@
     #define BSP_UART1_RX_PIN                GPIO_PIN_5
     #define BSP_UART1_RX_PORT               GPIOC
     #define BSP_UART1_RX_AF                 GPIO_AF7_USART1
-    #define UART1_RX_BUF_SIZE               256
-    #define UART1_TX_BUF_SIZE               256
+    #define UART1_RX_BUF_SIZE               512
+    #define UART1_TX_BUF_SIZE               512
     #define BSP_UART1_IRQ_PRIORITY          0
 #ifdef BSP_UART1_RX_USING_DMA
-    #define BSP_UART1_DMA_RX_INSTANCE       DMA1_Channel5
-    #define BSP_UART1_DMA_RX_IRQn           DMA1_Channel5_IRQn
-    #define UART1_DMA_RX_IRQHandler         DMA1_Channel5_IRQHandler
+    #define BSP_UART1_DMA_RX_INSTANCE       DMA1_Channel2
+    #define BSP_UART1_DMA_RX_IRQn           DMA1_Channel2_IRQn
+    #define UART1_DMA_RX_IRQHandler         DMA1_Channel2_IRQHandler
     #define UART1_RX_TEMP_BUF_SIZE          64
 #endif
 #ifdef BSP_UART1_TX_USING_DMA
-    #define BSP_UART1_DMA_TX_INSTANCE       DMA1_Channel6
-    #define BSP_UART1_DMA_TX_IRQn           DMA1_Channel6_IRQn
-    #define UART1_DMA_TX_IRQHandler         DMA1_Channel6_IRQHandler
+    #define BSP_UART1_DMA_TX_INSTANCE       DMA1_Channel3
+    #define BSP_UART1_DMA_TX_IRQn           DMA1_Channel3_IRQn
+    #define UART1_DMA_TX_IRQHandler         DMA1_Channel3_IRQHandler
 #endif
 #endif
 
@@ -134,19 +134,19 @@
     #define BSP_UART2_RX_PIN                GPIO_PIN_3
     #define BSP_UART2_RX_PORT               GPIOA
     #define BSP_UART2_RX_AF                 GPIO_AF7_USART2
-    #define UART2_RX_BUF_SIZE               256
-    #define UART2_TX_BUF_SIZE               256
+    #define UART2_RX_BUF_SIZE               512
+    #define UART2_TX_BUF_SIZE               512
     #define BSP_UART2_IRQ_PRIORITY          0
 #ifdef BSP_UART2_RX_USING_DMA
-    #define BSP_UART2_DMA_RX_INSTANCE       DMA1_Channel7
-    #define BSP_UART2_DMA_RX_IRQn           DMA1_Channel7_IRQn
-    #define UART2_DMA_RX_IRQHandler         DMA1_Channel7_IRQHandler
+    #define BSP_UART2_DMA_RX_INSTANCE       DMA1_Channel4
+    #define BSP_UART2_DMA_RX_IRQn           DMA1_Channel4_IRQn
+    #define UART2_DMA_RX_IRQHandler         DMA1_Channel4_IRQHandler
     #define UART2_RX_TEMP_BUF_SIZE          64
 #endif
 #ifdef BSP_UART2_TX_USING_DMA
-    #define BSP_UART2_DMA_TX_INSTANCE       DMA1_Channel8
-    #define BSP_UART2_DMA_TX_IRQn           DMA1_Channel8_IRQn
-    #define UART2_DMA_TX_IRQHandler         DMA1_Channel8_IRQHandler
+    #define BSP_UART2_DMA_TX_INSTANCE       DMA1_Channel5
+    #define BSP_UART2_DMA_TX_IRQn           DMA1_Channel5_IRQn
+    #define UART2_DMA_TX_IRQHandler         DMA1_Channel5_IRQHandler
 #endif
 #endif
 

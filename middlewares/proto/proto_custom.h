@@ -45,7 +45,7 @@ typedef enum {
     
     /* 操作错误 */
     ACK_ERR_PRODUCT_ADDR     = 0x11,    /**< 产品地址错误 */
-    ACK_ERR_MODULE_ADDR      = 0x12,    /**< 模块地址错误 */
+    ACK_ERR_MODULE_ADDR      = 0x12,    /**< 板卡地址错误 */
     ACK_ERR_INVALID_PARAM    = 0x13,    /**< 数据参数无效 */
     ACK_ERR_UNSUP_CMD        = 0x14,    /**< 不支持的命令 */
     ACK_ERR_BUSY             = 0x15,    /**< 操作正忙 */
@@ -53,16 +53,16 @@ typedef enum {
     ACK_ERR_MODE_ABNORMAL    = 0x17,    /**< 模式异常 */
     ACK_ERR_OPERATE_INVALID  = 0x18,    /**< 操作无效 */
     ACK_ERR_MODULE_LOCK      = 0x19,    /**< 模块锁定 */
-    ACK_ERR_SYSTEM_LOCK      = 0x20,    /**< 系统锁定 */
+    ACK_ERR_SYSTEM_LOCK      = 0x1A,    /**< 系统锁定 */
     
     /* 针对操作耗时类命令 */
-    ACK_IN_PROGERESS         = 0x80,    /**< 已接受，正在执行 */
+    ACK_IN_PROGERESS         = 0x20,    /**< 已接受，正在执行 */
 } ack_code_t;
 
 /* Exported constants --------------------------------------------------------*/
 
 #define PROTO_CUSTOM_FRAME_MIN_LEN      (0x09U)  /**< 自定义协议最小帧长度 */
-#define PROTO_CUSTOM_FRAME_MAX_LEN      (64U)    /**< 自定义协议最大帧长度 */
+#define PROTO_CUSTOM_FRAME_MAX_LEN      (512U)    /**< 自定义协议最大帧长度 */
 
 /**
  * @defgroup 通用命令码定义

@@ -26,11 +26,12 @@
 #include "proto.h"
 #include <string.h>
 #include "minmax.h"
+#include "errno-base.h"
 
 /* Private typedef -----------------------------------------------------------*/
 
 /* Private define ------------------------------------------------------------*/
-#define MAX_LOOP_COUNT          (8U)    /**< 最大循环次数限制（防止死循环） */
+#define MAX_LOOP_COUNT          (256U)    /**< 最大循环次数限制（防止死循环） */
 
 /* Private macro -------------------------------------------------------------*/
 
@@ -63,18 +64,17 @@ static int handle_match_tail(proto_t *inst, kfifo_t *fifo);
  * @param on_err 错误回调函数指针（可为NULL）
  * @retval 0 成功
  * @retval -1 失败（参数无效或缓冲区太小）
- * @details 初始化协议解析器，设置配置、缓冲区和回调函数
  */
 int proto_init(proto_t *inst, const proto_cfg_t *cfg, 
                uint8_t *rx_buf, uint16_t buf_size,
                kfifo_t *out_fifo, proto_error_cb_t on_err)
 {
     if ((inst == NULL) || (cfg == NULL) || (rx_buf == NULL) || (out_fifo == NULL)) {
-        return -1;
+        return -EINVAL;
     }
     
     if (buf_size < cfg->max_frame_len) {
-        return -1;
+        return -EINVAL;
     }
     
     (void)memset(inst, 0, sizeof(proto_t));
@@ -98,8 +98,12 @@ void proto_set_tick_cb(proto_t *inst, proto_tick_cb_t get_tick)
 {
     if (inst != NULL) {
         inst->get_tick = get_tick;
+        if (get_tick != NULL) {
+            inst->last_tick = get_tick();
+        }
     }
 }
+
 
 /**
  * @brief 核心轮询函数
@@ -112,45 +116,48 @@ void proto_set_tick_cb(proto_t *inst, proto_tick_cb_t get_tick)
 int proto_poll(proto_t *inst, kfifo_t *in_fifo)
 {
     unsigned int loops = MAX_LOOP_COUNT;
-    int ret;
-    
+    int progress;
+
     if ((inst == NULL) || (in_fifo == NULL)) {
         return 0;
     }
-    
+
+    if (in_fifo->esize != 1U) {
+        return 0;
+    }
+
     check_timeout(inst, in_fifo);
-    
-    while ((kfifo_len(in_fifo) > 0U) && (loops > 0U)) {
-        ret = 0;
-        
+
+    do {
+        progress = 0;
+
+        if (kfifo_len(in_fifo) == 0U) {
+            break;
+        }
+
         switch (inst->state) {
         case P_STATE_FIND_HEAD:
-            ret = handle_find_head(inst, in_fifo);
+            progress = handle_find_head(inst, in_fifo);
             break;
         case P_STATE_READ_LEN:
-            ret = handle_read_len(inst, in_fifo);
+            progress = handle_read_len(inst, in_fifo);
             break;
         case P_STATE_RECV_BODY:
-            ret = handle_recv_body(inst, in_fifo);
+            progress = handle_recv_body(inst, in_fifo);
             break;
         case P_STATE_MATCH_TAIL:
-            ret = handle_match_tail(inst, in_fifo);
+            progress = handle_match_tail(inst, in_fifo);
             break;
         default:
             reset_state(inst);
+            progress = 1;
             break;
         }
-        
-        /* 如果状态机在等待数据(ret=0)，则退出循环，避免忙等待 */
-        if (ret == 0) {
-            break;
-        }
-        
-        loops--;
-    }
-    
+    } while ((progress != 0) && (loops-- > 0U));
+
     return 0;
 }
+
 
 /**
  * @brief 重置解析器状态
@@ -283,43 +290,37 @@ static void check_timeout(proto_t *inst, kfifo_t *fifo)
     bool is_fifo_pending;
     uint32_t current_tick;
     uint32_t elapsed;
-    
+
     if ((inst == NULL) || (fifo == NULL) || (inst->cfg == NULL)) {
         return;
     }
-    
+
     if ((inst->cfg->timeout_ms == 0U) || (inst->get_tick == NULL)) {
         return;
     }
-    
-    /* 状态判断 */
-    is_rx_pending = (inst->w_idx > 0U);        /* rx_buf 里有数据（正在搬运中） */
-    is_fifo_pending = (kfifo_len(fifo) > 0U);  /* FIFO 里有数据（可能卡在预判阶段） */
-    
-    /* 如果完全空闲（两边都没数据），更新时间戳保活，直接返回 */
+
+    is_rx_pending   = (inst->w_idx > 0U);
+    is_fifo_pending = (kfifo_len(fifo) > 0U);
+
     if ((!is_rx_pending) && (!is_fifo_pending)) {
         inst->last_tick = inst->get_tick();
         return;
     }
-    
-    /* 核心检查 */
+
     current_tick = inst->get_tick();
-    
-    /* 处理时间戳回绕 */
+
     if (current_tick >= inst->last_tick) {
         elapsed = current_tick - inst->last_tick;
     } else {
         elapsed = (0xFFFFFFFFU - inst->last_tick) + current_tick + 1U;
     }
-    
+
     if (elapsed > inst->cfg->timeout_ms) {
         report_err(inst, PROTO_ERR_TIMEOUT);
-        
-        /* 关键修复：如果在 w_idx==0 时超时，说明数据卡在 FIFO 头部的预判阶段。
-         * 必须跳过 1 个字节，打破死锁，让解析器有机会去扫描后面的数据。
-         */
+
         if ((!is_rx_pending) && is_fifo_pending) {
             kfifo_skip(fifo);
+            update_tick(inst);
         }
     }
 }
@@ -424,109 +425,123 @@ static int handle_find_head(proto_t *inst, kfifo_t *fifo)
     uint32_t raw_len;
     uint16_t frame_len;
     uint8_t tail_byte;
-    
+
     if ((inst == NULL) || (fifo == NULL) || (inst->cfg == NULL)) {
         return 0;
     }
-    
+
     cfg = inst->cfg;
     fifo_total = kfifo_len(fifo);
-    
-    /* 1. 获取线性连续内存块，用于 memchr 零拷贝查找 */
+    if (fifo_total == 0U) {
+        return 0;
+    }
+
+    /* 获取线性连续内存块，用于 memchr 零拷贝查找 */
     linear_cnt = kfifo_out_linear(fifo, &tail_idx, fifo_total);
+    if (linear_cnt == 0U) {
+        return 0;
+    }
+
     base_ptr = (const uint8_t *)fifo->data + tail_idx;
     found = (const uint8_t *)memchr(base_ptr, cfg->head[0], linear_cnt);
-    
+
     if (found == NULL) {
         /* 当前线性段内没找到，跳过这段数据 */
         kfifo_skip_count(fifo, linear_cnt);
-        return 0;
+        update_tick(inst);
+        return 1;
     }
-    
-    /* 2. 跳过帧头前的垃圾数据 */
+
+    /* 跳过帧头前的垃圾数据 */
     skip = (unsigned int)(found - base_ptr);
     if (skip > 0U) {
         kfifo_skip_count(fifo, skip);
-        fifo_total -= skip;
+        update_tick(inst);
     }
-    
-    /* 3. 检查剩余数据是否足够匹配完整帧头 */
+
+    /* 重新获取剩余长度（skip 后 out 已变化） */
+    fifo_total = kfifo_len(fifo);
+
+    /* 基本检查：剩余数据是否足够匹配完整帧头 */
     if (fifo_total < cfg->head_len) {
-        return 0; /* 数据不足，等待 */
+        return (skip > 0U) ? 1 : 0;
     }
-    
-    /* 预览完整帧头到 rx_buf */
-    if (kfifo_out_peek(fifo, inst->rx_buf, cfg->head_len) != cfg->head_len) {
-        return 0;
-    }
-    
-    if (memcmp(inst->rx_buf, cfg->head, cfg->head_len) != 0) {
-        /* 第一个字节匹配但后续不匹配，只跳过第一个字节，重新寻找 */
-        kfifo_skip(fifo);
-        reset_state(inst);
-        return 0;
-    }
-    
-    /* 4. 长度与尾部预判（仅针对 LEN_FIELD 类型） */
+
+    /* 长度与尾部预判（仅针对 LEN_FIELD 类型） */
     if (cfg->type == FRAME_TYPE_LEN_FIELD) {
-        len_end = cfg->len_cfg.len_offset + cfg->len_cfg.len_size;
-        
+        len_end = (uint16_t)cfg->len_cfg.len_offset + (uint16_t)cfg->len_cfg.len_size;
+
         /* 数据还不够解析长度字段，等待 */
         if (fifo_total < len_end) {
-            return 0;
+            return (skip > 0U) ? 1 : 0;
         }
-        
-        /* A. 提取长度字段 */
+
+        /* 一次 peek：拿到 head + len 字段，避免重复 peek */
         (void)kfifo_out_peek(fifo, inst->rx_buf, len_end);
-        raw_len = raw_read_uint(&inst->rx_buf[cfg->len_cfg.len_offset], 
-                                cfg->len_cfg.len_size, 
+
+        /* 帧头匹配 */
+        if (memcmp(inst->rx_buf, cfg->head, cfg->head_len) != 0) {
+            kfifo_skip(fifo); /* 只跳过一个字节，继续找头 */
+            update_tick(inst);
+            return 1;
+        }
+
+        /* 提取长度字段 */
+        raw_len = raw_read_uint(&inst->rx_buf[cfg->len_cfg.len_offset],
+                                cfg->len_cfg.len_size,
                                 cfg->is_big_endian);
         frame_len = (uint16_t)raw_len;
+
         if (cfg->len_cfg.len_cb != NULL) {
             frame_len = cfg->len_cfg.len_cb(inst->rx_buf, frame_len);
         }
-        
-        /* B. 长度范围检查（Min/Max） */
+
+        /* 长度范围检查（Min/Max） */
         if ((frame_len > cfg->max_frame_len) || (frame_len < cfg->min_frame_len)) {
-            kfifo_skip(fifo); /* 这是一个坏头，必须跳过 */
-            report_err(inst, PROTO_ERR_LEN_INVALID); /* 立即上报错误 */
-            return 0;
+            kfifo_skip(fifo);
+            update_tick(inst);
+            report_err(inst, PROTO_ERR_LEN_INVALID);
+            return 1;
         }
-        
-        /* 防止死锁 */
+
+        /* 帧长度大于 FIFO 容量时，必然无法接收完整帧 */
         if (frame_len > kfifo_size(fifo)) {
             kfifo_skip(fifo);
-            report_err(inst, PROTO_ERR_LEN_INVALID); /* 立即上报错误 */
-            return 0;
+            update_tick(inst);
+            report_err(inst, PROTO_ERR_LEN_INVALID);
+            return 1;
         }
-        
-        /* C. 尾部匹配检查（Look-Ahead，解决嵌套伪帧问题） */
+
+        /* Look-Ahead：仅当数据已到齐时检查尾字节；不再 store-and-forward 等待 */
         if ((fifo_total >= frame_len) && (cfg->tail_len > 0U)) {
-            /* 偷看帧尾位置的字节 */
-            if (peek_byte_at(fifo, frame_len - 1U, &tail_byte) != 0) {
+            if (peek_byte_at(fifo, (unsigned int)frame_len - 1U, &tail_byte) != 0) {
                 if (tail_byte != cfg->tail[cfg->tail_len - 1U]) {
-                    /* 头对、长度对、但尾不对 -> 判定为帧尾错误 */
                     kfifo_skip(fifo);
+                    update_tick(inst);
                     report_err(inst, PROTO_ERR_TAIL);
-                    return 0;
+                    return 1;
                 }
             }
         }
-        
-        /* D. Store and Forward：数据不够全帧，先等待 */
-        if (fifo_total < frame_len) {
+    } else {
+        /* 非 LEN_FIELD：只需检查帧头 */
+        if (kfifo_out_peek(fifo, inst->rx_buf, cfg->head_len) != cfg->head_len) {
             return 0;
         }
+        if (memcmp(inst->rx_buf, cfg->head, cfg->head_len) != 0) {
+            kfifo_skip(fifo);
+            update_tick(inst);
+            return 1;
+        }
     }
-    
-    /* 5. 确认为真头，从 FIFO 搬运帧头数据 */
+
+    /* 确认为真头，从 FIFO 搬运帧头数据 */
     (void)kfifo_out(fifo, inst->rx_buf, cfg->head_len);
     inst->w_idx = cfg->head_len;
     update_tick(inst);
-    
+
     /* 状态迁移 */
     if (cfg->type == FRAME_TYPE_FIXED) {
-        /* FIXED 模式使用 max_frame_len 作为固定长度 */
         inst->target_len = cfg->max_frame_len;
         inst->state = P_STATE_RECV_BODY;
     } else if (cfg->type == FRAME_TYPE_LEN_FIELD) {
@@ -534,8 +549,8 @@ static int handle_find_head(proto_t *inst, kfifo_t *fifo)
     } else {
         inst->state = P_STATE_MATCH_TAIL;
     }
-    
-    return 0;
+
+    return 1;
 }
 
 /**
@@ -549,43 +564,53 @@ static int handle_find_head(proto_t *inst, kfifo_t *fifo)
 static int handle_read_len(proto_t *inst, kfifo_t *fifo)
 {
     const proto_cfg_t *cfg;
+    uint16_t len_end;
     uint16_t needed;
     uint32_t raw;
     uint16_t final;
-    
+
     if ((inst == NULL) || (fifo == NULL) || (inst->cfg == NULL)) {
         return 0;
     }
-    
+
     cfg = inst->cfg;
-    needed = (cfg->len_cfg.len_offset + cfg->len_cfg.len_size) - inst->w_idx;
-    
-    if (kfifo_len(fifo) < needed) {
-        return 0;
+    len_end = (uint16_t)cfg->len_cfg.len_offset + (uint16_t)cfg->len_cfg.len_size;
+
+    /* 配置非法：长度字段结束位置在已搬运数据之前（避免 unsigned 下溢） */
+    if (len_end < inst->w_idx) {
+        report_err(inst, PROTO_ERR_LEN_INVALID);
+        return 1;
     }
-    
-    /* 从 FIFO 读出数据 */
-    (void)kfifo_out(fifo, &inst->rx_buf[inst->w_idx], needed);
-    inst->w_idx += needed;
-    update_tick(inst);
-    
-    raw = raw_read_uint(&inst->rx_buf[cfg->len_cfg.len_offset], 
-                       cfg->len_cfg.len_size, 
-                       cfg->is_big_endian);
+
+    needed = len_end - inst->w_idx;
+
+    if (needed != 0U) {
+        if (kfifo_len(fifo) < needed) {
+            return 0;
+        }
+
+        (void)kfifo_out(fifo, &inst->rx_buf[inst->w_idx], needed);
+        inst->w_idx += needed;
+        update_tick(inst);
+    }
+
+    raw = raw_read_uint(&inst->rx_buf[cfg->len_cfg.len_offset],
+                        cfg->len_cfg.len_size,
+                        cfg->is_big_endian);
     final = (uint16_t)raw;
+
     if (cfg->len_cfg.len_cb != NULL) {
         final = cfg->len_cfg.len_cb(inst->rx_buf, final);
     }
-    
-    /* 二次校验 */
+
     if ((final > cfg->max_frame_len) || (final < inst->w_idx)) {
         report_err(inst, PROTO_ERR_LEN_INVALID);
-        return 0;
+        return 1;
     }
-    
+
     inst->target_len = final;
     inst->state = P_STATE_RECV_BODY;
-    return 1; /* 状态切换，立即处理 */
+    return 1;
 }
 
 /**
@@ -599,26 +624,32 @@ static int handle_recv_body(proto_t *inst, kfifo_t *fifo)
 {
     uint16_t remain;
     unsigned int copy_len;
-    
+
     if ((inst == NULL) || (fifo == NULL)) {
         return 0;
     }
-    
-    remain = inst->target_len - inst->w_idx;
-    /* 批量搬运 */
-    copy_len = min(kfifo_len(fifo), remain);
-    
-    if (copy_len > 0U) {
-        (void)kfifo_out(fifo, &inst->rx_buf[inst->w_idx], copy_len);
-        inst->w_idx += copy_len;
-        update_tick(inst);
+
+    if (inst->w_idx >= inst->target_len) {
+        finalize_frame(inst);
+        return 1;
     }
-    
+
+    remain = inst->target_len - inst->w_idx;
+    copy_len = min(kfifo_len(fifo), (unsigned int)remain);
+
+    if (copy_len == 0U) {
+        return 0;
+    }
+
+    (void)kfifo_out(fifo, &inst->rx_buf[inst->w_idx], copy_len);
+    inst->w_idx += (uint16_t)copy_len;
+    update_tick(inst);
+
     if (inst->w_idx >= inst->target_len) {
         finalize_frame(inst);
     }
-    
-    return 0;
+
+    return 1;
 }
 
 /**
@@ -638,59 +669,55 @@ static int handle_match_tail(proto_t *inst, kfifo_t *fifo)
     uint8_t tail_last_byte;
     const uint8_t *found;
     unsigned int copy_len;
-    
+
     if ((inst == NULL) || (fifo == NULL) || (inst->cfg == NULL)) {
         return 0;
     }
-    
+
     cfg = inst->cfg;
     fifo_len = kfifo_len(fifo);
-    
+
     linear_len = kfifo_out_linear(fifo, &tail_idx, fifo_len);
     if (linear_len == 0U) {
         return 0;
     }
-    
+
     base = (const uint8_t *)fifo->data + tail_idx;
     tail_last_byte = cfg->tail[cfg->tail_len - 1U];
-    
-    /* 使用 memchr 快速查找尾部最后一个字节 */
+
     found = (const uint8_t *)memchr(base, tail_last_byte, linear_len);
-    
+
     if (found == NULL) {
-        /* 没找到尾，全部搬运到 rx_buf（如果 buffer 够大） */
         copy_len = linear_len;
+
         if ((inst->w_idx + copy_len) > inst->buf_size) {
-            report_err(inst, PROTO_ERR_BUFF_OVERFLOW); /* 溢出 */
-            return 0;
+            report_err(inst, PROTO_ERR_BUFF_OVERFLOW);
+            return 1;
         }
+
         (void)kfifo_out(fifo, &inst->rx_buf[inst->w_idx], copy_len);
-        inst->w_idx += copy_len;
+        inst->w_idx += (uint16_t)copy_len;
         update_tick(inst);
-        return 0;
+        return 1;
     }
-    
-    /* 找到了潜在的尾部，只搬运到 found 的位置（包含 found） */
+
     copy_len = (unsigned int)(found - base) + 1U;
-    
+
     if ((inst->w_idx + copy_len) > inst->buf_size) {
-        report_err(inst, PROTO_ERR_LEN_INVALID);
-        return 0;
+        report_err(inst, PROTO_ERR_BUFF_OVERFLOW);
+        return 1;
     }
-    
+
     (void)kfifo_out(fifo, &inst->rx_buf[inst->w_idx], copy_len);
-    inst->w_idx += copy_len;
+    inst->w_idx += (uint16_t)copy_len;
     update_tick(inst);
-    
-    /* 检查是否匹配完整尾部 */
+
     if (inst->w_idx >= cfg->tail_len) {
-        if (memcmp(&inst->rx_buf[inst->w_idx - cfg->tail_len], 
+        if (memcmp(&inst->rx_buf[inst->w_idx - cfg->tail_len],
                    cfg->tail, cfg->tail_len) == 0) {
             finalize_frame(inst);
-            return 0;
         }
     }
-    
-    /* 如果匹配失败，继续等待后续数据（TAIL 模式容错机制） */
-    return 0;
+
+    return 1;
 }

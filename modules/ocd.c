@@ -24,7 +24,7 @@
 #include "bsp_dwt.h"
 
 #define  LOG_TAG             "ocd"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 
 /* External variables --------------------------------------------------------*/
@@ -121,8 +121,8 @@ int ocd_init(void)
     g_initialized = 1U;
 
     LOG_D("OCD initialized: CH1 buf_size=%d, CH2 buf_size=%d",
-          g_channel_info[OCD_POSITIVE].buf_size,
-          g_channel_info[OCD_NEGTIVE].buf_size);
+          (int)g_channel_info[OCD_POSITIVE].buf_size,
+          (int)g_channel_info[OCD_NEGTIVE].buf_size);
 
     return 0;
 }

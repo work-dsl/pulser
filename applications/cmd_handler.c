@@ -29,7 +29,7 @@
 #include <string.h>
 
 #define  LOG_TAG             "cmd_handler"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,56 +69,39 @@ void cmd_handler_notify_pulse_complete(void)
 {
     cmd_result_t result;
     pulse_report_t report;
-    const char *mode_str;
-    const char *status_str;
-    uint16_t offset;
+    uint8_t status_value;
 
     /* 获取脉冲引擎状态 */
     if (pulse_engine_get_status(&report) != 0) {
         return;
     }
 
-    /* 构建上报数据：| 模式字符串 | 状态字符串 | 次数(2字节) | */
-    offset = 0;
+    /* 构建上报数据：模式(1字节) | 状态(1字节) | 次数(2字节，小端序) */
+    result.resp_data[0] = (uint8_t)report.mode;
 
-    /* 模式字符串 */
-    if (report.mode == PULSE_MODE_NORMAL) {
-        mode_str = "Normal";
-    } else {
-        mode_str = "SYNC";
-    }
-    memcpy(&result.resp_data[offset], mode_str, strlen(mode_str));
-    offset += strlen(mode_str);
-    result.resp_data[offset++] = '|';
-
-    /* 状态字符串 */
+    /* 状态值：空闲状态且计数>0表示已完成，使用3表示完成状态 */
     if (report.status == PULSE_STATUS_IDLE && report.count > 0U) {
         /* 空闲状态且计数>0表示已完成 */
-        status_str = "OK";
-    } else if (report.status == PULSE_STATUS_ERROR) {
-        status_str = "ERROR";
-    } else if (report.status == PULSE_STATUS_RUNNING) {
-        status_str = "RUNNING";
+        status_value = 3U;
     } else {
-        status_str = "IDLE";
+        status_value = (uint8_t)report.status;
     }
-    memcpy(&result.resp_data[offset], status_str, strlen(status_str));
-    offset += strlen(status_str);
-    result.resp_data[offset++] = '|';
+    result.resp_data[1] = status_value;
 
-    /* 次数(2字节) */
-    result.resp_data[offset++] = (uint8_t)(report.count & 0xFFU);
-    result.resp_data[offset++] = (uint8_t)((report.count >> 8) & 0xFFU);
+    /* 次数(2字节，小端序) */
+    result.resp_data[2] = (uint8_t)(report.count & 0xFFU);
+    result.resp_data[3] = (uint8_t)((report.count >> 8) & 0xFFU);
 
     result.ack_code = ACK_OK;
-    result.resp_len = offset;
+    result.resp_len = 4U;
 
     /* 调用响应回调 */
     if (g_response_callback != NULL) {
         g_response_callback(CMD_PULSE_ENGINE_STATUS_UPLOAD, &result);
     }
 
-    LOG_D("Upload pulse status: %s|%s|%d", mode_str, status_str, report.count);
+    LOG_D("Upload pulse status: mode=%d, status=%d, count=%d",
+          report.mode, status_value, report.count);
 }
 
 /**
@@ -452,25 +435,50 @@ void cmd_handle_get_pulse_engine_trigger_mode(const uint8_t *payload, uint16_t l
  */
 void cmd_handle_set_pulse_engine_parameters(const uint8_t *payload, uint16_t len, cmd_result_t *result)
 {
-    int ret;
-    pulse_params_t params;
+    int32_t ret;
+    const pulse_params_t* params;
+    uint8_t num_groups;
+    uint16_t expected_len;
 
-    if (len != sizeof(pulse_params_t)) {
+    /* 检查payload长度是否至少包含一个参数 */
+    if (len < sizeof(pulse_params_t)) {
         result->ack_code = ACK_ERR_INVALID_PARAM;
         result->resp_len = 0;
-        LOG_D("Invalid param length: %d, expected: %d", len, sizeof(pulse_params_t));
+        LOG_D("Invalid param length: %d, expected at least: %d", len, sizeof(pulse_params_t));
         return;
     }
 
-    memcpy(&params, payload, sizeof(pulse_params_t));
+    /* 获取第一个参数，确定群数量 */
+    params = (const pulse_params_t*)payload;
+    num_groups = params[0].num_of_group;
 
-    ret = pulse_engine_set_seq_param(&params);
+    /* 验证群数量 */
+    if ((num_groups < GROUP_NUM_MIN) || (num_groups > GROUP_NUM_MAX)) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid num_of_group: %d", num_groups);
+        return;
+    }
+
+    /* 计算期望的数据长度 */
+    expected_len = (uint16_t)(sizeof(pulse_params_t) * num_groups);
+
+    /* 验证数据长度 */
+    if (len != expected_len) {
+        result->ack_code = ACK_ERR_INVALID_PARAM;
+        result->resp_len = 0;
+        LOG_D("Invalid param length: %d, expected: %d", len, expected_len);
+        return;
+    }
+
+    /* 调用批量设置函数，该函数会验证所有参数 */
+    ret = pulse_engine_set_seq_params_batch(params, num_groups);
     if (ret == 0) {
         result->ack_code = ACK_OK;
-        LOG_D("Set pulse param: group %d/%d", params.group_num, params.num_of_group);
+        LOG_D("Set pulse params batch: %d groups", num_groups);
     } else {
         result->ack_code = ACK_ERR_INVALID_PARAM;
-        LOG_D("Failed to set pulse param");
+        LOG_D("Failed to set pulse params batch, ret: %d", ret);
     }
 
     result->resp_len = 0;

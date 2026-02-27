@@ -48,6 +48,25 @@
 static void SystemClock_Config(void);
 static void rtt_output_handler(const char *msg, size_t len);
 
+#if LOG_WITH_TIMESTAMP
+/**
+ * @brief 获取当前时间戳（毫秒）
+ * @return 时间戳值（毫秒）
+ * @note 使用DWT计数器实现高精度时间戳
+ */
+uint32_t log_time_now(void)
+{
+    extern uint32_t SystemCoreClock;
+    double seconds;
+    uint32_t result;
+    
+    seconds = bsp_dwt_get_seconds();
+    result = (uint32_t)(seconds * 1000.0);
+    
+    return result;
+}
+#endif
+
 /* Exported functions --------------------------------------------------------*/
 /**
   * @brief
@@ -57,19 +76,20 @@ static void rtt_output_handler(const char *msg, size_t len);
   */
 void board_init(void)
 {
-    /* 调试代码初始化 */
-    SEGGER_RTT_Init();
-    SEGGER_RTT_ConfigUpBuffer(0, "RTTUP", NULL, 0, SEGGER_RTT_MODE_NO_BLOCK_SKIP);
-    log_register_handler("rtt", rtt_output_handler);
-    log_enable_handler("rtt");
-
-    DBGMCU->APB1FZR1 |= DBGMCU_APB1FZR1_DBG_WWDG_STOP;
-
     /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
     HAL_Init();
 
     /* Configure the system clock */
     SystemClock_Config();
+      
+    /* 调试代码初始化 */
+    SEGGER_RTT_Init();
+    SEGGER_RTT_ConfigUpBuffer(0, "RTT", NULL, 0, SEGGER_RTT_MODE_NO_BLOCK_SKIP);
+    log_init();
+    log_register_handler("rtt", rtt_output_handler);
+    log_enable_handler("rtt");
+    
+    LOG_D("SYSCLK frequency is %d!", HAL_RCC_GetSysClockFreq());
 
     /* 检查复位源 */
     if (__HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST)) {
@@ -81,11 +101,11 @@ void board_init(void)
     __HAL_RCC_CLEAR_RESET_FLAGS();  /* 清除复位标志 */
 
     /* Initialize all configured peripherals */
+    bsp_gpio_init();
     __HAL_RCC_DMAMUX1_CLK_ENABLE();
     __HAL_RCC_DMA1_CLK_ENABLE();
-    
+    __HAL_RCC_DMA2_CLK_ENABLE();
     bsp_dwt_init();
-    bsp_gpio_init();
     bsp_iwdg_init();
     bsp_sram_init();
     bsp_uart_init();
@@ -114,7 +134,7 @@ void SystemClock_Config(void)
     RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
     RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
     RCC_OscInitStruct.PLL.PLLN = 85;
-    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV6;
     RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
     RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -148,15 +168,13 @@ void HAL_MspInit(void)
 #else
     __HAL_RCC_SYSCFG_CLK_ENABLE();
 #endif
-
     __HAL_RCC_PWR_CLK_ENABLE();
-
-    /* 配置NVIC优先级分组 */
-    HAL_NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_4);
-
+    
+#ifdef UCPD1
     /** Disable the internal Pull-Up in Dead Battery pins of UCPD peripheral
     */
     HAL_PWREx_DisableUCPDDeadBattery();
+#endif
 }
 
 /**
@@ -174,23 +192,14 @@ void Error_Handler(void)
 }
 
 /**
- * RTT输出处理器
+ * @brief RTT输出处理器
+ * @param msg 日志消息
+ * @param len 消息长度
+ * @note 使用WriteSkipNoLock因为log系统已经有锁保护，避免双重锁开销
  */
 static void rtt_output_handler(const char *msg, size_t len)
 {
     SEGGER_RTT_Write(0, msg, len);
-}
-
-/**
-  Put a character to the stderr
-
-  \param[in]   ch  Character to output
-  \return          The character written, or -1 on write error.
-*/
-int stderr_putchar (int ch)
-{
-    SEGGER_RTT_PutChar(0, ch);
-    return (-1);
 }
 
 /**

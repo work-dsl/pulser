@@ -28,7 +28,7 @@ extern "C" {
 #define PULSE_PARAMETERS_ARE_VARIABLE   (0)    /* 是否支持脉冲参数动态变化 */
 
 /* 脉冲宽度限制 */
-#define PULSE_PW_MIN                    (50)   /* 最小脉冲宽度 (ns) */
+#define PULSE_PW_MIN                    (200)   /* 最小脉冲宽度 (ns) */
 #define PULSE_PW_MAX                    (10000) /* 最大脉冲宽度 (ns) */
 
 /* 脉冲间隙限制 */
@@ -50,8 +50,8 @@ extern "C" {
 #define PERIOD_PER_TRAIN_NUM_MAX        (300)   /* 每串最大脉冲周期数 */
 
 /* 脉冲串间隙限制 */
-#define TRAIN_GAP_MIN                   (1)     /* 最小串间隙 (ms) */
-#define TRAIN_GAP_MAX                   (100)   /* 最大串间隙 (ms) */
+#define TRAIN_GAP_MIN                   (100)   /* 最小串间隙 (us)，精度10us */
+#define TRAIN_GAP_MAX                   (10000) /* 最大串间隙 (us)，精度10us */
 
 /* 每群脉冲串数限制 */
 #define TRAIN_PER_GROUP_NUM_MIN         (1)     /* 每群最小脉冲串数 */
@@ -79,7 +79,7 @@ typedef struct pulse_sequence {
     uint8_t  group_num;             /**< 群编号，范围：1-20 */
     uint16_t group_gap;             /**< 群间隙，范围：50-10000ms */
     uint16_t train_per_group;       /**< 每群脉冲串数量，范围：1-300 */
-    uint16_t train_gap;             /**< 脉冲串间隙，范围：1-100ms */
+    uint16_t train_gap;             /**< 脉冲串间隙，范围：100-10000us，精度10us */
     uint16_t periods_per_train;     /**< 每串脉冲周期数，范围：1-300 */
     uint16_t np_gap;                /**< 负-正脉冲间隙，单位：ns */
     uint16_t pos_pw;                /**< 正脉宽，单位：ns */
@@ -145,6 +145,7 @@ int32_t pulse_engine_init(void);
 int32_t pulse_engine_set_mode(pulse_mode_t mode);
 int32_t pulse_engine_get_mode(pulse_mode_t* mode);
 int32_t pulse_engine_set_seq_param(const pulse_params_t* p);
+int32_t pulse_engine_set_seq_params_batch(const pulse_params_t* params, uint8_t num_groups);
 int32_t pulse_engine_get_seq_param(pulse_params_t* p, uint16_t* total_groups);
 int32_t pulse_engine_set_sync_param(const ecg_sync_cfg_t* config);
 int32_t pulse_engine_get_sync_param(ecg_sync_cfg_t* config);

@@ -26,7 +26,7 @@
 #include <string.h>
 
 #define  LOG_TAG             "pulse_engine"
-#define  LOG_LVL             4
+#define  LOG_LVL             3
 #include "log.h"
 
 /*------------------------------ Macro definition ----------------------------*/
@@ -59,6 +59,7 @@ typedef struct {
     volatile pulse_status_t status;             /**< 脉冲输出状态 */
     volatile uint16_t       output_count;       /**< 脉冲输出次数计数器 */
     volatile uint16_t       group_cnt;          /**< 当前输出的脉冲群计数器 */
+    volatile uint16_t       train_cnt;          /**< 当前群内的脉冲串计数器（软件计数）*/
     bool                    hardware_configured;/**< 硬件参数配置标志位 */
     volatile uint8_t        locked;             /**< 锁定标志：1=锁定（禁止启动），0=未锁定 */
 } pulse_control_t;
@@ -135,17 +136,17 @@ int32_t pulse_engine_init(void)
         result = -EIO;
         /* 保持锁定状态，不继续初始化 */
     } else {
-        /* 2. 初始化TIM6（群间隙定时器） */
+        /* 初始化TIM6（群间隙定时器） */
         MX_TIM6_Init();
         /* 注意：MX_TIM6_Init()失败会调用Error_Handler()，所以这里假设成功 */
 
-        /* 3. 初始化TIM4（心电R波检测定时器） */
+        /* 初始化TIM4（心电R波检测定时器） */
         MX_TIM4_Init();
 
-        /* 4. 初始化TIM7（心电触发延时定时器） */
+        /* 初始化TIM7（心电触发延时定时器） */
         MX_TIM7_Init();
 
-        /* 5. 初始化TIM15（心电停止时间定时器） */
+        /* 初始化TIM15（心电停止时间定时器） */
         MX_TIM15_Init();
 
         /* 所有硬件初始化成功，解除锁定 */
@@ -342,6 +343,114 @@ int32_t pulse_engine_get_seq_param(pulse_params_t* p, uint16_t* total_groups)
 }
 
 /**
+ * @brief 批量设置脉冲序列参数（一次性设置所有群参数）
+ *
+ * @param[in] params 脉冲序列参数数组指针
+ * @param[in] num_groups 群参数数量
+ *
+ * @return int32_t 返回状态
+ * @retval  0 设置成功
+ * @retval -EINVAL 设置失败（参数为空指针、参数无效或群编号不匹配）
+ * @retval -EBUSY 设置失败（正在运行中）
+ * @retval -ENOSPC 设置失败（缓冲区已满）
+ *
+ * @details 先验证所有群参数，只有全部验证通过才保存使用。
+ *          如果任何一个参数验证失败，全部参数都不保存，返回错误。
+ *
+ * @note 必须在非运行状态下设置
+ */
+int32_t pulse_engine_set_seq_params_batch(const pulse_params_t* params, uint8_t num_groups)
+{
+    int32_t result = -EINVAL;
+    uint8_t i;
+    uint8_t expected_group_num;
+    uint8_t num_of_group;
+    uint16_t group_gap;
+    pulse_params_t temp_buf[GROUP_NUM_MAX];
+
+    if (params == NULL) {
+        return -EINVAL;
+    }
+
+    if (num_groups == 0U) {
+        return -EINVAL;
+    }
+
+    if (num_groups > GROUP_NUM_MAX) {
+        return -ENOSPC;
+    }
+
+    /* 检查是否在运行状态 */
+    if (g_control.status == PULSE_STATUS_RUNNING) {
+        return -EBUSY;
+    }
+
+    /* 验证第一个参数 */
+    if (params[0].group_num != 1U) {
+        return -EINVAL;
+    }
+
+    if (!param_is_valid(&params[0])) {
+        return -EINVAL;
+    }
+
+    num_of_group = params[0].num_of_group;
+    group_gap = params[0].group_gap;
+
+    /* 验证群数量是否匹配 */
+    if (num_of_group != num_groups) {
+        return -EINVAL;
+    }
+
+    /* 验证所有群参数 */
+    for (i = 0U; i < num_groups; i++) {
+        expected_group_num = (uint8_t)(i + 1U);
+
+        /* 验证群编号 */
+        if (params[i].group_num != expected_group_num) {
+            return -EINVAL;
+        }
+
+        /* 验证参数有效性 */
+        if (!param_is_valid(&params[i])) {
+            return -EINVAL;
+        }
+
+        /* 验证所有参数的 num_of_group 和 group_gap 是否一致 */
+        if (params[i].num_of_group != num_of_group) {
+            return -EINVAL;
+        }
+
+        if (params[i].group_gap != group_gap) {
+            return -EINVAL;
+        }
+    }
+
+    /* 所有验证通过，保存到临时缓冲区 */
+    (void)memcpy(temp_buf, params, sizeof(pulse_params_t) * num_groups);
+
+    /* 清除旧参数并保存新参数 */
+    g_params.group_num = 0U;
+    g_params.expected_num_of_group = num_of_group;
+    g_params.expected_group_num = (uint8_t)(num_groups + 1U);
+    g_params.group_gap_ms = group_gap;
+    g_control.hardware_configured = false;
+    (void)memset(g_params.seq_buf, 0, sizeof(g_params.seq_buf));
+
+    /* 保存所有参数 */
+    (void)memcpy(g_params.seq_buf, temp_buf, sizeof(pulse_params_t) * num_groups);
+    g_params.group_num = num_groups;
+
+    /* 配置硬件 */
+    pulse_out_set_hardware();
+    g_control.hardware_configured = true;
+
+    result = 0;
+
+    return result;
+}
+
+/**
  * @brief 获取脉冲输出状态
  *
  * @param[out] report 状态上报结构体指针
@@ -431,7 +540,7 @@ static bool param_is_valid(const pulse_params_t *param)
                (param->periods_per_train > PERIOD_PER_TRAIN_NUM_MAX)) {
         is_valid = false;
     } else if ((param->train_gap > TRAIN_GAP_MAX) ||
-               ((param->train_gap > 0U) && (param->train_gap < TRAIN_GAP_MIN))) {
+               (param->train_gap < TRAIN_GAP_MIN)) {
         is_valid = false;
     } else if ((param->train_per_group < TRAIN_PER_GROUP_NUM_MIN) ||
                (param->train_per_group > TRAIN_PER_GROUP_NUM_MAX)) {
@@ -527,11 +636,12 @@ static int32_t pulse_out_set_hardware(void)
         g_hw_config.dma_buf[i].period_B = g_hw_config.dma_buf[i].period_A;
         g_hw_config.dma_buf[i].repetion_A = param->periods_per_train - 1U;
 
-        /* 串个数配置 */
-        g_hw_config.dma_buf[i].repetion_B = (param->periods_per_train * param->train_per_group) - 1U;
+        /* 串个数配置 - 方案2：不再使用定时器B的重复计数，改为软件计数 */
+        /* 定时器B的重复计数设置为0，串数由定时器A的重复中断配合软件计数实现 */
+        g_hw_config.dma_buf[i].repetion_B = 0U;
 
-        /* 串间隙配置 */
-        g_hw_config.train_gap_buf[i] = tim_arr_from_ms(param->train_gap);
+        /* 串间隙配置（单位：us，精度10us） */
+        g_hw_config.train_gap_buf[i] = tim_arr_from_us(param->train_gap);
     }
 
     /* 群间隙配置 */
@@ -572,6 +682,7 @@ int32_t pulse_engine_start(void)
                 /* 正常模式：立即启动 */
                 g_control.status = PULSE_STATUS_RUNNING;
                 g_control.group_cnt = 0U;
+                g_control.train_cnt = 0U;  /* 初始化串计数器 */
                 g_control.output_count = 0U;
 
                 /* 确保TIM6处于停止状态并清零计数器 */
@@ -589,6 +700,7 @@ int32_t pulse_engine_start(void)
                 /* 心电同步触发模式：等待心电触发 */
                 g_control.status = PULSE_STATUS_RUNNING;
                 g_control.group_cnt = 0U;
+                g_control.train_cnt = 0U;  /* 初始化串计数器 */
 
                 /* 启动心电R波检测模块，等待触发 */
                 if (ecg_sync_start() == 0) {
@@ -627,9 +739,8 @@ int32_t pulse_engine_stop(void)
 {
     /* 停止HRTIM硬件 */
     LL_HRTIM_DisableOutput(HRTIM1, LL_HRTIM_OUTPUT_TA1 | LL_HRTIM_OUTPUT_TA2);
-    LL_HRTIM_TIM_CounterDisable(HRTIM1, LL_HRTIM_TIMER_A | LL_HRTIM_TIMER_B);
+    LL_HRTIM_TIM_CounterDisable(HRTIM1, LL_HRTIM_TIMER_A);
     LL_HRTIM_TIM_SetCounter(HRTIM1, LL_HRTIM_TIMER_A, 0U);
-    LL_HRTIM_TIM_SetCounter(HRTIM1, LL_HRTIM_TIMER_B, 0U);
     LL_HRTIM_BM_Disable(HRTIM1);
 
     /* 停止群间隙定时器 */
@@ -642,6 +753,7 @@ int32_t pulse_engine_stop(void)
 
     g_control.status = PULSE_STATUS_IDLE;
     g_control.group_cnt = 0U;
+    g_control.train_cnt = 0U;  /* 清零串计数器 */
 
     return 0;
 }
@@ -666,13 +778,8 @@ static inline void config_next_group_params(uint8_t group_idx)
     /* 每串脉冲周期个数配置 */
     LL_HRTIM_TIM_SetRepetition(HRTIM1, LL_HRTIM_TIMER_A, g_hw_config.dma_buf[group_idx].repetion_A);
 
-    /* 串个数配置 */
-    LL_HRTIM_TIM_SetPeriod(HRTIM1, LL_HRTIM_TIMER_B, g_hw_config.dma_buf[group_idx].period_B);
-    LL_HRTIM_TIM_SetRepetition(HRTIM1, LL_HRTIM_TIMER_B, g_hw_config.dma_buf[group_idx].repetion_B);
-
     /* 更新定时器配置 */
     LL_HRTIM_ForceUpdate(HRTIM1, LL_HRTIM_TIMER_A);
-    LL_HRTIM_ForceUpdate(HRTIM1, LL_HRTIM_TIMER_B);
 
     /* 配置串间隙 */
     LL_HRTIM_BM_SetPeriod(HRTIM1, g_hw_config.train_gap_buf[group_idx]);
@@ -689,9 +796,8 @@ static inline void config_next_group_params(uint8_t group_idx)
 static inline void stop_pulse_output(void)
 {
     LL_HRTIM_DisableOutput(HRTIM1, LL_HRTIM_OUTPUT_TA1 | LL_HRTIM_OUTPUT_TA2);
-    LL_HRTIM_TIM_CounterDisable(HRTIM1, LL_HRTIM_TIMER_A | LL_HRTIM_TIMER_B);
+    LL_HRTIM_TIM_CounterDisable(HRTIM1, LL_HRTIM_TIMER_A);
     LL_HRTIM_TIM_SetCounter(HRTIM1, LL_HRTIM_TIMER_A, 0U);
-    LL_HRTIM_TIM_SetCounter(HRTIM1, LL_HRTIM_TIMER_B, 0U);
     LL_HRTIM_BM_Disable(HRTIM1);
 }
 
@@ -705,7 +811,7 @@ static inline void stop_pulse_output(void)
 static inline void pulse_output_restart(void)
 {
     LL_HRTIM_EnableOutput(HRTIM1, LL_HRTIM_OUTPUT_TA1 | LL_HRTIM_OUTPUT_TA2);
-    LL_HRTIM_TIM_CounterEnable(HRTIM1, LL_HRTIM_TIMER_A | LL_HRTIM_TIMER_B);
+    LL_HRTIM_TIM_CounterEnable(HRTIM1, LL_HRTIM_TIMER_A);
     LL_HRTIM_BM_Enable(HRTIM1);
 }
 
@@ -727,8 +833,9 @@ static inline void start_pulse_internal(void)
         return;
     }
 
-    /* 重置群计数器 */
+    /* 重置群计数器和串计数器 */
     g_control.group_cnt = 0U;
+    g_control.train_cnt = 0U;
 
     /* 配置第一组脉冲参数 */
     config_next_group_params(0U);
@@ -750,55 +857,68 @@ static void on_ecg_trigger_callback(void)
 }
 
 /**
- * @brief HRTIM定时器B全局中断处理函数
+ * @brief HRTIM定时器A全局中断处理函数（方案2：使用定时器A的重复中断）
  *
- * @details 当一组脉冲输出完成时触发，负责配置下一组参数或完成输出
+ * @details 当一串脉冲输出完成时触发，负责软件计数串数，完成群输出后配置下一组参数
  *
  * @return 无
  */
-void HRTIM1_TIMB_IRQHandler(void)
+void HRTIM1_TIMA_IRQHandler(void)
 {
-    if(LL_HRTIM_IsActiveFlag_REP(HRTIM1, LL_HRTIM_TIMER_B))
+    if(LL_HRTIM_IsActiveFlag_REP(HRTIM1, LL_HRTIM_TIMER_A))
     {
         /* 清除中断标志 */
-        LL_HRTIM_ClearFlag_REP(HRTIM1, LL_HRTIM_TIMER_B);
+        LL_HRTIM_ClearFlag_REP(HRTIM1, LL_HRTIM_TIMER_A);
 
-        /* 停止当前脉冲输出 */
-        stop_pulse_output();
+        /* 更新串计数器（定时器A的重复中断表示一串脉冲完成） */
+        g_control.train_cnt++;
 
-        /* 更新群计数 */
-        g_control.group_cnt++;
+        /* 获取当前群的参数 */
+        const pulse_params_t *param = &g_params.seq_buf[g_control.group_cnt];
 
-        /* 检查是否还有下一组脉冲 */
-        if (g_control.group_cnt < g_params.group_num) {
-            /* 配置下一组脉冲参数 */
-            config_next_group_params((uint8_t)g_control.group_cnt);
+        /* 检查是否完成当前群的所有串 */
+        if (g_control.train_cnt >= param->train_per_group) {
+            /* 当前群的所有串输出完成 */
+            g_control.train_cnt = 0U;
 
-            /* 启动群间隙计数器 */
-            __HAL_TIM_SET_COUNTER(&htim6, 0U);
-            __HAL_TIM_ENABLE(&htim6);
-        } else {
-            /* 所有群输出完成 */
-            g_control.group_cnt = 0U;
+            /* 停止当前脉冲输出 */
+            stop_pulse_output();
 
-            /* 根据模式处理完成逻辑 */
-            if (g_control.mode == PULSE_MODE_ECG_SYNC) {
-                /* 心电同步模式：通知心电同步模块脉冲输出完成 */
-                pulse_engine_notify_output_complete();
-                ecg_sync_notify_pulse_complete();
+            /* 更新群计数 */
+            g_control.group_cnt++;
 
-                /* 检查心电同步是否已完成所有重复 */
-                if (ecg_sync_get_state() == SYNC_STATUS_IDLE) {
-                    /* 所有重复已完成，切换到空闲状态 */
+            /* 检查是否还有下一组脉冲 */
+            if (g_control.group_cnt < g_params.group_num) {
+                /* 配置下一组脉冲参数 */
+                config_next_group_params((uint8_t)g_control.group_cnt);
+
+                /* 启动群间隙计数器 */
+                __HAL_TIM_SET_COUNTER(&htim6, 0U);
+                __HAL_TIM_ENABLE(&htim6);
+            } else {
+                /* 所有群输出完成 */
+                g_control.group_cnt = 0U;
+
+                /* 根据模式处理完成逻辑 */
+                if (g_control.mode == PULSE_MODE_ECG_SYNC) {
+                    /* 心电同步模式：通知心电同步模块脉冲输出完成 */
+                    pulse_engine_notify_output_complete();
+                    ecg_sync_notify_pulse_complete();
+
+                    /* 检查心电同步是否已完成所有重复 */
+                    if (ecg_sync_get_state() == SYNC_STATUS_IDLE) {
+                        /* 所有重复已完成，切换到空闲状态 */
+                        g_control.status = PULSE_STATUS_IDLE;
+                    }
+                    /* 否则保持RUNNING状态（ECG还在等待下一次触发） */
+                } else {
+                    /* 正常模式：直接切换到空闲状态 */
+                    pulse_engine_notify_output_complete();
                     g_control.status = PULSE_STATUS_IDLE;
                 }
-                /* 否则保持RUNNING状态（ECG还在等待下一次触发） */
-            } else {
-                /* 正常模式：直接切换到空闲状态 */
-                pulse_engine_notify_output_complete();
-                g_control.status = PULSE_STATUS_IDLE;
             }
         }
+        /* 否则：还有更多串要输出，继续等待下一串（突发模式会自动处理串间隙） */
     }
 }
 
