@@ -32,14 +32,10 @@
 /* Exported macro ------------------------------------------------------------*/
 
 /* Exported variable prototypes ----------------------------------------------*/
-extern IWDG_HandleTypeDef hiwdg;
 
 /* Exported function prototypes ----------------------------------------------*/
 void board_init(void);
 void Error_Handler(void);
-
-void MX_IWDG_Init(void);
-
 
 #ifdef __cplusplus
 }

@@ -109,6 +109,7 @@
     #define BSP_UART1_RX_AF                 GPIO_AF7_USART1
     #define UART1_RX_BUF_SIZE               512
     #define UART1_TX_BUF_SIZE               512
+    #define UART1_RX_CACHE_BUF_SIZE         64
     #define BSP_UART1_IRQ_PRIORITY          0
 #ifdef BSP_UART1_RX_USING_DMA
     #define BSP_UART1_DMA_RX_INSTANCE       DMA1_Channel2
@@ -136,6 +137,7 @@
     #define BSP_UART2_RX_AF                 GPIO_AF7_USART2
     #define UART2_RX_BUF_SIZE               512
     #define UART2_TX_BUF_SIZE               512
+    #define UART2_RX_CACHE_BUF_SIZE         64
     #define BSP_UART2_IRQ_PRIORITY          0
 #ifdef BSP_UART2_RX_USING_DMA
     #define BSP_UART2_DMA_RX_INSTANCE       DMA1_Channel4

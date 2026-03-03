@@ -23,7 +23,7 @@
 #include "board.h"
 #include "gpio.h"
 #include "stimer.h"
-#include "watchdog.h"
+#include "wdg.h"
 
 #define  LOG_TAG             "safty"
 #define  LOG_LVL             3
@@ -36,7 +36,7 @@
 /*------------------------------ variables prototypes -------------------------*/
 stimer_t led_timer;
 
-static struct watchdog_device* iwdg_dev = NULL;
+static struct wdg_device* iwdg_dev = NULL;
 
 /*------------------------------ application ----------------------------------*/
 void led_timer_callback(void* arg)

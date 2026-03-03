@@ -884,6 +884,11 @@
               <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_fmac.c</FilePath>
             </File>
             <File>
+              <FileName>stm32g4xx_hal_iwdg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_iwdg.c</FilePath>
+            </File>
+            <File>
               <FileName>stm32g4xx_hal_gpio.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\drivers\stm32g4xx-hal-driver\Src\stm32g4xx_hal_gpio.c</FilePath>
